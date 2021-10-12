@@ -126,7 +126,7 @@ class Prepare:
                 schema.fields.append(field_schema)
 
         return milvus_types.CreateCollectionRequest(collection_name=collection_name,
-                                                    schema=bytes(schema.SerializeToString()), shards_num = shards_num)
+                                                    schema=bytes(schema.SerializeToString()), shards_num=shards_num)
 
     @classmethod
     def drop_collection_request(cls, collection_name):
@@ -381,7 +381,7 @@ class Prepare:
 
         # if partition_name is null or empty, delete action will apply to whole collection
         partition_name = partition_name or ""
-        request = milvus_types.DeleteRequest(collection_name=collection_name, expr = expr, partition_name=partition_name)
+        request = milvus_types.DeleteRequest(collection_name=collection_name, expr=expr, partition_name=partition_name)
         return request
 
     @classmethod
@@ -508,7 +508,8 @@ class Prepare:
             return requests
 
     @classmethod
-    def search_request(cls, collection_name, query_entities, partition_names=None, fields=None, round_decimal=-1, **kwargs):
+    def search_request(cls, collection_name, query_entities, partition_names=None, fields=None, round_decimal=-1,
+                       **kwargs):
         schema = kwargs.get("schema", None)
         fields_schema = schema.get("fields", None)  # list
         fields_name_locs = {fields_schema[loc]["name"]: loc
@@ -656,6 +657,61 @@ class Prepare:
                                           for key, value in search_params.items()])
 
             requests.append(request)
+
+        return requests
+
+    @classmethod
+    def search_requests_with_ids(cls, collection_name, search_ids, anns_field, param, limit, expr=None,
+                                 partition_names=None,
+                                 output_fields=None, round_decimal=-1, **kwargs):
+        schema = kwargs.get("schema", None)
+        fields_schema = schema.get("fields", None)  # list
+        fields_name_locs = {fields_schema[loc]["name"]: loc
+                            for loc in range(len(fields_schema))}
+
+        requests = []
+
+        if len(search_ids) <= 0:
+            return requests
+
+        nq = len(search_ids)
+        ## TODO: add MaxSearchResultSize check
+
+        if anns_field not in fields_name_locs:
+            raise ParamError(f"Field {anns_field} doesn't exist in schema")
+
+        param_copy = copy.deepcopy(param)
+        metric_type = param_copy.pop("metric_type", "L2")
+        params = param_copy.pop("params", {})
+        if not isinstance(params, dict):
+            raise ParamError("Search params must be a dict")
+        search_params = {"anns_field": anns_field, "topk": limit, "metric_type": metric_type, "params": params,
+                         "round_decimal": round_decimal}
+
+        def dump(v):
+            if isinstance(v, dict):
+                return ujson.dumps(v)
+            return str(v)
+
+        request = milvus_types.SearchRequest(
+            collection_name=collection_name,
+            partition_names=partition_names,
+            output_fields=output_fields,
+        )
+
+        request.dsl_type = common_types.DslType.BoolExprV1
+        if expr is not None:
+            request.dsl = expr
+        request.search_params.extend([common_types.KeyValuePair(key=str(key), value=dump(value))
+                                      for key, value in search_params.items()])
+
+        # extract_search_ids
+        if (not isinstance(search_ids, list)) or len(search_ids) == 0 or not isinstance(search_ids[0], int):
+            raise ParamError("search ids array is empty or not a list or ids are not int type")
+
+        request.searchIDs.int_id.data.extend(search_ids)
+
+        requests.append(request)
 
         return requests
 

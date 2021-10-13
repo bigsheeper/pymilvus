@@ -447,7 +447,7 @@ class Partition:
         :raises BaseException: If the return result from server is not ok.
 
         :example:
-            >>> from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType
+            >>> from pymilvus import connections, Collection, Partition, FieldSchema, CollectionSchema, DataType
             >>> import random
             >>> connections.connect()
             <pymilvus.client.stub.Milvus object at 0x7f8579002dc0>
@@ -474,14 +474,14 @@ class Partition:
             ...     "limit": 2,
             ...     "expr": "film_id > 0",
             ... }
-            >>> res = partition.search(**search_param)
+            >>> res = partition.search_by_id(**search_param)
             >>> assert len(res) == 1
             >>> hits = res[0]
             >>> assert len(hits) == 2
             >>> print(f"- Total hits: {len(hits)}, hits ids: {hits.ids} ")
-            - Total hits: 1, hits ids: [1]
+            - Total hits: 2, hits ids: [1, 5]
             >>> print(f"- Top1 hit id: {hits[0].id}, distance: {hits[0].distance}, score: {hits[0].score} ")
-            - Top1 hit id: 1, distance: 0.10143111646175385, score: 0.10143111646175385
+            - Top1 hit id: 1, distance: 0.0, score: 0.0
         """
         conn = self._get_connection()
         res = conn.search_by_id(self._collection.name, search_ids, anns_field, param, limit,

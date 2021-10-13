@@ -711,7 +711,7 @@ class Prepare:
         if (not isinstance(search_ids, list)) or len(search_ids) == 0 or not isinstance(search_ids[0], int):
             raise ParamError("search ids array is empty or not a list or ids are not int type")
 
-        request.search_ids.id_array.int_id.data.extend(search_ids)
+        request.searchIDs.int_id.data.extend(search_ids)
 
         requests.append(request)
 

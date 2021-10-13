@@ -747,9 +747,9 @@ class Collection:
             >>> hits = res[0]
             >>> assert len(hits) == 2
             >>> print(f"- Total hits: {len(hits)}, hits ids: {hits.ids} ")
-            - Total hits: 1, hits ids: [1]
+            - Total hits: 2, hits ids: [1, 9]
             >>> print(f"- Top1 hit id: {hits[0].id}, distance: {hits[0].distance}, score: {hits[0].score} ")
-            - Top1 hit id: 1, distance: 0.10143111646175385, score: 0.10143111646175385
+            - Top1 hit id: 1, distance: 0.0, score: 0.0
         """
         if expr is not None and not isinstance(expr, str):
             raise DataTypeNotMatchException(0, ExceptionsMessage.ExprType % type(expr))

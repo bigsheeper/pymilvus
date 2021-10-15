@@ -879,3 +879,17 @@ class Prepare:
         postcheck_params(type_right, params)
 
         return request
+
+    @classmethod
+    def load_balance_request(cls, source_node_ids, sealed_segment_ids):
+        if source_node_ids is None or not isinstance(source_node_ids, list):
+            raise ParamError("source_node_ids value {} is illegal".format(source_node_ids))
+
+        if sealed_segment_ids is None or not isinstance(sealed_segment_ids, list):
+            raise ParamError("sealed_segment_ids value {} is illegal".format(sealed_segment_ids))
+
+        request = milvus_types.LoadBalanceRequest()
+        request.source_nodeIDs.extend(source_node_ids)
+        request.sealed_segmentIDs.extend(sealed_segment_ids)
+
+        return request

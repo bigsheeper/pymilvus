@@ -370,3 +370,30 @@ def calc_distance(vectors_left, vectors_right, params=None, timeout=None, using=
     for i in range(n):
         res_2_d.append(res[i * m:i * m + m])
     return res_2_d
+
+def load_balance(source_node_ids, sealed_segment_ids, timeout=None, using="default"):
+    """
+    Do load balancing operation between source query nodes.
+
+    :param source_node_ids: The query node ids to balance.
+    :type  source_node_ids: list[int]
+
+    :param sealed_segment_ids: Sealed segment ids to balance.
+    :type  sealed_segment_ids: list[int]
+
+    :param timeout: The timeout for this method, unit: second
+    :type  timeout: int
+
+    :raises BaseException: If query nodes not exist.
+    :raises BaseException: If sealed segments not exist.
+
+    :example:
+        >>> from pymilvus import connections, utility
+        >>>
+        >>> connections.connect()
+        >>>
+        >>> source_node_ids = []
+        >>> sealed_segment_ids = []
+        >>> res = utility.load_balance(source_node_ids, sealed_segment_ids)
+    """
+    return _get_connection(using).load_balance(source_node_ids, sealed_segment_ids, timeout)

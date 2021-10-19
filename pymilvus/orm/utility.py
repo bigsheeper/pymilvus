@@ -371,12 +371,15 @@ def calc_distance(vectors_left, vectors_right, params=None, timeout=None, using=
         res_2_d.append(res[i * m:i * m + m])
     return res_2_d
 
-def load_balance(source_node_ids, sealed_segment_ids, timeout=None, using="default"):
+def load_balance(src_node_id, dst_node_id, sealed_segment_ids, timeout=None, using="default"):
     """
     Do load balancing operation between source query nodes.
 
-    :param source_node_ids: The query node ids to balance.
-    :type  source_node_ids: list[int]
+    :param src_node_id: The source query node id to balance.
+    :type  src_node_id: int
+
+    :param dst_node_id: The destination query node id to balance.
+    :type  dst_node_id: int
 
     :param sealed_segment_ids: Sealed segment ids to balance.
     :type  sealed_segment_ids: list[int]
@@ -392,8 +395,9 @@ def load_balance(source_node_ids, sealed_segment_ids, timeout=None, using="defau
         >>>
         >>> connections.connect()
         >>>
-        >>> source_node_ids = []
+        >>> src_node_id = 0
+        >>> dst_node_id = 1
         >>> sealed_segment_ids = []
-        >>> res = utility.load_balance(source_node_ids, sealed_segment_ids)
+        >>> res = utility.load_balance(src_node_id, dst_node_id, sealed_segment_ids)
     """
-    return _get_connection(using).load_balance(source_node_ids, sealed_segment_ids, timeout)
+    return _get_connection(using).load_balance(src_node_id, dst_node_id, sealed_segment_ids, timeout)

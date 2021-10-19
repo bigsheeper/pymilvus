@@ -1197,8 +1197,8 @@ class GrpcHandler:
         raise BaseException(0, "Empty result returned")
 
     @error_handler()
-    def load_balance(self, source_node_ids, sealed_segment_ids, timeout=None, **kwargs):
-        req = Prepare.load_balance_request(source_node_ids, sealed_segment_ids)
+    def load_balance(self, src_node_id, dst_node_id, sealed_segment_ids, timeout=None, **kwargs):
+        req = Prepare.load_balance_request(src_node_id, dst_node_id, sealed_segment_ids)
         future = self._stub.LoadBalance.future(req, wait_for_ready=True, timeout=timeout)
         status = future.result()
         if status.error_code != 0:

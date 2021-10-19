@@ -1185,12 +1185,15 @@ class Milvus:
             return handler.query(collection_name, expr, output_fields, partition_names, timeout=timeout)
 
     @retry_on_rpc_failure(retry_times=10, wait=1)
-    def load_balance(self, source_node_ids, sealed_segment_ids, timeout=None, **kwargs):
+    def load_balance(self, src_node_id, dst_node_id, sealed_segment_ids, timeout=None, **kwargs):
         """
         Do load balancing operation between source query nodes.
 
-        :param source_node_ids: The query node ids to balance.
-        :type  source_node_ids: list[int]
+        :param src_node_id: The source query node id to balance.
+        :type  src_node_id: int
+
+        :param dst_node_id: The destination query node id to balance.
+        :type  dst_node_id: int
 
         :param sealed_segment_ids: Sealed segment ids to balance.
         :type  sealed_segment_ids: list[int]
@@ -1202,4 +1205,4 @@ class Milvus:
         :raises BaseException: If sealed segments not exist.
         """
         with self._connection() as handler:
-            return handler.load_balance(source_node_ids, sealed_segment_ids, timeout, **kwargs)
+            return handler.load_balance(src_node_id, dst_node_id, sealed_segment_ids, timeout, **kwargs)

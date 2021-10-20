@@ -397,6 +397,7 @@ class MilvusServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
 
+
 def add_MilvusServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'CreateCollection': grpc.unary_unary_rpc_method_handler(

@@ -3145,7 +3145,7 @@ _GETPERSISTENTSEGMENTINFOREQUEST = _descriptor.Descriptor(
   oneofs=[
   ],
   serialized_start=8329,
-  serialized_end=8466,
+  serialized_end=8446,
 )
 
 

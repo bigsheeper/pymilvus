@@ -959,7 +959,7 @@ class Milvus:
         """
         check_pass_param(collection_name=collection_name)
         with self._connection() as handler:
-           return handler.delete(collection_name, expr, partition_name, timeout, **kwargs)
+            return handler.delete(collection_name, expr, partition_name, timeout, **kwargs)
 
     @retry_on_rpc_failure(retry_times=10, wait=1)
     def flush(self, collection_names=None, timeout=None, **kwargs):
@@ -1047,6 +1047,9 @@ class Milvus:
             * *guarantee_timestamp* (``int``) --
               This function instructs Milvus to see all operations performed before a provided timestamp. If no
               such timestamp is provided, then Milvus will search all operations performed to date.
+            * *travel_timestamp* (``int``) --
+              Users can specify a timestamp in a search to get results based on a data view
+                        at a specified point in time.
 
         :return: Query result. QueryResult is iterable and is a 2d-array-like class, the first dimension is
                  the number of vectors to query (nq), the second dimension is the number of limit(topk).
@@ -1118,6 +1121,22 @@ class Milvus:
             return handler.calc_distance(vectors_left, vectors_right, params, timeout, **kwargs)
 
     @retry_on_rpc_failure(retry_times=10, wait=1)
+    def get_query_segment_info(self, timeout=None, **kwargs):
+        """
+        Notifies Proxy to return segments information from query nodes.
+
+        :param timeout: An optional duration of time in seconds to allow for the RPC. When timeout
+                        is set to None, client waits until server response or error occur.
+        :type  timeout: float
+
+        :return: QuerySegmentInfo:
+            QuerySegmentInfo is the growing segments's information in query cluster.
+        :rtype: QuerySegmentInfo
+        """
+        with self._connection() as handler:
+            return handler.get_query_segment_infos(timeout, **kwargs)
+
+    @retry_on_rpc_failure(retry_times=10, wait=1)
     def load_collection_progress(self, collection_name, timeout=None):
         with self._connection() as handler:
             return handler.load_collection_progress(collection_name, timeout=timeout)
@@ -1187,7 +1206,7 @@ class Milvus:
     @retry_on_rpc_failure(retry_times=10, wait=1)
     def load_balance(self, src_node_id, dst_node_id, sealed_segment_ids, timeout=None, **kwargs):
         """
-        Do load balancing operation between source query nodes.
+        Do load balancing operation from source query node to destination query node.
 
         :param src_node_id: The source query node id to balance.
         :type  src_node_id: int

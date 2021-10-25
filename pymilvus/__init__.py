@@ -41,6 +41,8 @@ from .orm.utility import (
     has_partition,
     list_collections,
     drop_collection,
+    get_query_segment_info,
+    load_balance,
 )
 
 from .orm import utility

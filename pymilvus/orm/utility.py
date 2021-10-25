@@ -373,7 +373,7 @@ def calc_distance(vectors_left, vectors_right, params=None, timeout=None, using=
 
 def load_balance(src_node_id, dst_node_id, sealed_segment_ids, timeout=None, using="default"):
     """
-    Do load balancing operation between source query nodes.
+    Do load balancing operation from source query node to destination query node.
 
     :param src_node_id: The source query node id to balance.
     :type  src_node_id: int
@@ -392,12 +392,33 @@ def load_balance(src_node_id, dst_node_id, sealed_segment_ids, timeout=None, usi
 
     :example:
         >>> from pymilvus import connections, utility
-        >>>
+        >>> 
         >>> connections.connect()
-        >>>
+        >>> 
         >>> src_node_id = 0
         >>> dst_node_id = 1
         >>> sealed_segment_ids = []
         >>> res = utility.load_balance(src_node_id, dst_node_id, sealed_segment_ids)
     """
     return _get_connection(using).load_balance(src_node_id, dst_node_id, sealed_segment_ids, timeout)
+
+def get_query_segment_info(timeout=None, using="default"):
+    """
+    Notifies Proxy to return segments information from query nodes.
+
+    :param timeout: An optional duration of time in seconds to allow for the RPC. When timeout
+                    is set to None, client waits until server response or error occur.
+    :type  timeout: float
+
+    :return: QuerySegmentInfo:
+        QuerySegmentInfo is the growing segments's information in query cluster.
+    :rtype: QuerySegmentInfo
+
+    :example:
+        >>> from pymilvus import connections, utility
+        >>>
+        >>> connections.connect()
+        >>>
+        >>> res = utility.get_query_segment_info()
+    """
+    return _get_connection(using).get_query_segment_info()

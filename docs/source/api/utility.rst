@@ -28,6 +28,10 @@ Methods
 +--------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------+
 | `calc_distance(vectors_left, vectors_right, params, [timeout, using]) <#pymilvus.utility.calc_distance>`_                      | Calculate distance between two vector arrays. |
 +--------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------+
+| `get_query_segment_info([timeout, using]) <#pymilvus.utility.get_query_segment_info>`_                                         | Get segments information from query nodes.    |
++--------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------+
+| `load_balance(src_node_id, dst_node_id, sealed_segment_ids, [timeout, using]) <#pymilvus.utility.load_balance>`_               | Do load balancing between query nodes.        |
++--------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------+
 
 APIs References
 ---------------
@@ -36,4 +40,4 @@ APIs References
    :member-order: bysource
    :members: loading_progress, wait_for_loading_complete, index_building_progress,
              wait_for_index_building_complete, has_collection, has_partition, list_collections,
-             drop_collection, calc_distance
+             drop_collection, calc_distance, get_query_segment_info, load_balance

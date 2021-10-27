@@ -477,10 +477,7 @@ class GrpcHandler:
         collection_schema = self.describe_collection(collection_name, timeout=timeout, **kwargs)
 
         fields_name = list()
-        for i in range(len(entities)):
-            if "name" in entities[i]:
-                fields_name.append(entities[i]["name"])
-
+        fields_name = [entities[i]["name"] for i in range(len(entities)) if "name" in entities[i]]
         fields_info = collection_schema["fields"]
 
         request = insert_param if insert_param \
@@ -521,6 +518,7 @@ class GrpcHandler:
         except Exception as err:
             if kwargs.get("_async", False):
                 return MutationFuture(None, None, err)
+            raise err
         finally:
             # once delete api is finished, remove this error
             raise NotImplementedError("Delete function is not implemented")

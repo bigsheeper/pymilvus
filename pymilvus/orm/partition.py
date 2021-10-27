@@ -354,6 +354,12 @@ class Partition:
             * *_callback* (``function``) --
               The callback function which is invoked after server response successfully. It only
               takes effect when _async is set to True.
+            * *guarantee_timestamp* (``function``) --
+              This function instructs Milvus to see all operations performed before a provided timestamp. If no
+              such timestamp is provided, then Milvus will search all operations performed to date.
+            * *travel_timestamp* (``int``) --
+              Users can specify a timestamp in a search to get results based on a data view
+                        at a specified point in time.
 
         :return: SearchResult:
             SearchResult is iterable and is a 2d-array-like class, the first dimension is

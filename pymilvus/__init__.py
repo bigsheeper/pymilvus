@@ -41,10 +41,13 @@ from .orm.utility import (
     has_partition,
     list_collections,
     drop_collection,
+    get_query_segment_info,
 )
 
 from .orm import utility
 from .orm.default_config import DefaultConfig
+
+from .client.utils import generate_timestamp
 
 from .orm.search import SearchResult, Hits, Hit
 from .orm.schema import FieldSchema, CollectionSchema
@@ -56,6 +59,7 @@ __all__ = [
     'Collection', 'Index', 'Partition',
     'connections',
     'loading_progress', 'index_building_progress', 'wait_for_loading_complete', 'has_collection', 'has_partition', 'list_collections', 'wait_for_loading_complete', 'wait_for_index_building_complete', 'drop_collection',
+    'generate_timestamp',
     'SearchResult', 'Hits', 'Hit',
     'FieldSchema', 'CollectionSchema',
     'SearchFuture', 'MutationFuture',

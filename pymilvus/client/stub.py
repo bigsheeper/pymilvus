@@ -959,7 +959,7 @@ class Milvus:
         """
         check_pass_param(collection_name=collection_name)
         with self._connection() as handler:
-           return handler.delete(collection_name, expr, partition_name, timeout, **kwargs)
+            return handler.delete(collection_name, expr, partition_name, timeout, **kwargs)
 
     @retry_on_rpc_failure(retry_times=10, wait=1)
     def flush(self, collection_names=None, timeout=None, **kwargs):
@@ -1044,6 +1044,12 @@ class Milvus:
             * *_callback* (``function``) --
               The callback function which is invoked after server response successfully. It only take
               effect when _async is set to True.
+            * *guarantee_timestamp* (``int``) --
+              This function instructs Milvus to see all operations performed before a provided timestamp. If no
+              such timestamp is provided, then Milvus will search all operations performed to date.
+            * *travel_timestamp* (``int``) --
+              Users can specify a timestamp in a search to get results based on a data view
+                        at a specified point in time.
 
         :return: Query result. QueryResult is iterable and is a 2d-array-like class, the first dimension is
                  the number of vectors to query (nq), the second dimension is the number of limit(topk).
@@ -1167,6 +1173,23 @@ class Milvus:
         """
         with self._connection() as handler:
             return handler.calc_distance(vectors_left, vectors_right, params, timeout, **kwargs)
+
+    @retry_on_rpc_failure(retry_times=10, wait=1)
+    def get_query_segment_info(self, collection_name, timeout=None, **kwargs):
+        """
+        Notifies Proxy to return segments information from query nodes.
+
+        :param collection_name: The name of the collection to get segments info.
+        :param timeout: An optional duration of time in seconds to allow for the RPC. When timeout
+                        is set to None, client waits until server response or error occur.
+        :type  timeout: float
+
+        :return: QuerySegmentInfo:
+            QuerySegmentInfo is the growing segments's information in query cluster.
+        :rtype: QuerySegmentInfo
+        """
+        with self._connection() as handler:
+            return handler.get_query_segment_infos(collection_name, timeout, **kwargs)
 
     @retry_on_rpc_failure(retry_times=10, wait=1)
     def load_collection_progress(self, collection_name, timeout=None):

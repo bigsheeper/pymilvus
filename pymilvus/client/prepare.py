@@ -1,23 +1,16 @@
-import abc
 import copy
-import struct
 import ujson
 import mmh3
 
+from . import blob
+from .configs import DefaultConfigs
 from .exceptions import ParamError
 from .check import check_pass_param
+from .types import DataType, PlaceholderType, DeployMode
 
-from ..grpc_gen import milvus_pb2 as grpc_types
-
-# for milvus-distributed
 from ..grpc_gen import common_pb2 as common_types
 from ..grpc_gen import schema_pb2 as schema_types
 from ..grpc_gen import milvus_pb2 as milvus_types
-
-from . import blob
-from .configs import DefaultConfigs
-
-from .types import RangeType, DataType, MetricType, IndexType, PlaceholderType, DeployMode
 
 
 class Prepare:
@@ -45,7 +38,6 @@ class Prepare:
 
         if "fields" not in fields:
             raise ParamError("Param fields must contains key 'fields'")
-
 
         schema = schema_types.CollectionSchema(name=collection_name)
 
@@ -356,31 +348,27 @@ class Prepare:
 
         insert_request.num_rows = row_num
 
-        # generate hash keys, TODO: better hash function
-        if not fields_info[primary_key_loc].get("auto_id", False):
-            field_name = fields_info[primary_key_loc].get("name")
-            entity_loc = location[field_name]
-            hash_keys = [abs(mmh3.hash(str(e))) for e in entities[entity_loc].get("values")]
-            insert_request.hash_keys.extend(hash_keys)
+        # insert_request.hash_keys won't be filled in client. 
+        # It will be filled in proxy.
 
         return insert_request
 
     @classmethod
     def delete_request(cls, collection_name, partition_name, expr):
-        def check_str(input, prefix):
-            if (input == None):
+        def check_str(instr, prefix):
+            if instr is None:
                 raise ParamError(prefix + " cannot be None")
-            if not isinstance(input, str):
+            if not isinstance(instr, str):
                 msg = prefix + " value {} is illegal"
-                raise ParamError(msg.format(input))
-            if input == "":
+                raise ParamError(msg.format(instr))
+            if instr == "":
                 raise ParamError(prefix + " cannot be empty")
 
         check_str(collection_name, "collection_name")
+        if partition_name is not None and partition_name != "":
+                check_str(partition_name, "partition_name")
         check_str(expr, "expr")
 
-        # if partition_name is null or empty, delete action will apply to whole collection
-        partition_name = partition_name or ""
         request = milvus_types.DeleteRequest(collection_name=collection_name, expr=expr, partition_name=partition_name)
         return request
 
@@ -418,7 +406,8 @@ class Prepare:
         vector_placeholders = dict()
         vector_names = dict()
 
-        meta = {}   # TODO: ugly here, find a better method
+        meta = {}  # TODO: ugly here, find a better method
+
         def extract_vectors_param(param, placeholders, meta=None, names=None, round_decimal=-1):
             if not isinstance(param, (dict, list)):
                 return
@@ -463,7 +452,7 @@ class Prepare:
 
         requests = []
         factor = 10
-        topk = meta.get("topk", 100)    # TODO: ugly here, find a better method
+        topk = meta.get("topk", 100)  # TODO: ugly here, find a better method
         for tag, vectors in vector_placeholders.items():
             if len(vectors) <= 0:
                 continue
@@ -500,6 +489,7 @@ class Prepare:
                     collection_name=collection_name,
                     partition_names=partition_names,
                     output_fields=fields,
+                    guarantee_timestamp=kwargs.get("guarantee_timestamp", 0),
                 )
                 request.dsl = ujson.dumps(duplicated_entities)
                 request.placeholder_group = plg_str
@@ -518,13 +508,14 @@ class Prepare:
         if not isinstance(query_entities, (dict,)):
             raise ParamError("Invalid query format. 'query_entities' must be a dict")
 
-        if fields is not None and not isinstance(fields, (list, )):
+        if fields is not None and not isinstance(fields, (list,)):
             raise ParamError("Invalid query format. 'fields' must be a list")
 
         request = milvus_types.SearchRequest(
             collection_name=collection_name,
             partition_names=partition_names,
             output_fields=fields,
+            guarantee_timestamp=kwargs.get("guarantee_timestamp", 0),
         )
 
         duplicated_entities = copy.deepcopy(query_entities)
@@ -633,7 +624,9 @@ class Prepare:
         params = param_copy.pop("params", {})
         if not isinstance(params, dict):
             raise ParamError("Search params must be a dict")
-        search_params = {"anns_field": anns_field, "topk": limit, "metric_type": metric_type, "params": params, "round_decimal": round_decimal}
+        search_params = {"anns_field": anns_field, "topk": limit, "metric_type": metric_type, "params": params,
+                         "round_decimal": round_decimal}
+
         def dump(v):
             if isinstance(v, dict):
                 return ujson.dumps(v)
@@ -647,6 +640,8 @@ class Prepare:
                 collection_name=collection_name,
                 partition_names=partition_names,
                 output_fields=output_fields,
+                guarantee_timestamp=kwargs.get("guarantee_timestamp", 0),
+                travel_timestamp=kwargs.get("travel_timestamp", 0),
             )
             request.placeholder_group = plg_str
 
@@ -782,7 +777,7 @@ class Prepare:
     @classmethod
     def release_partitions(cls, db_name, collection_name, partition_names):
         return milvus_types.ReleasePartitionsRequest(db_name=db_name, collection_name=collection_name,
-                                                    partition_names=partition_names)
+                                                     partition_names=partition_names)
 
     @classmethod
     def get_collection_stats_request(cls, collection_name):
@@ -833,11 +828,11 @@ class Prepare:
                                          )
 
     @classmethod
-    def calc_distance_request(cls,  vectors_left, vectors_right, params):
-        if vectors_left == None or not isinstance(vectors_left, dict):
+    def calc_distance_request(cls, vectors_left, vectors_right, params):
+        if vectors_left is None or not isinstance(vectors_left, dict):
             raise ParamError("vectors_left value {} is illegal".format(vectors_left))
 
-        if vectors_right == None or not isinstance(vectors_right, dict):
+        if vectors_right is None or not isinstance(vectors_right, dict):
             raise ParamError("vectors_right value {} is illegal".format(vectors_right))
 
         def precheck_params(p):
@@ -853,11 +848,12 @@ class Prepare:
 
         request = milvus_types.CalcDistanceRequest()
         request.params.extend([common_types.KeyValuePair(key=str(key), value=str(value))
-                                      for key, value in params.items()])
+                               for key, value in params.items()])
 
         _TYPE_IDS = "ids"
         _TYPE_FLOAT = "float_vectors"
         _TYPE_BIN = "bin_vectors"
+
         def extract_vectors(vectors, request_op, is_left):
             prefix = "vectors_right"
             if is_left:
@@ -872,7 +868,7 @@ class Prepare:
                 if (not isinstance(ids, list)) or len(ids) == 0:
                     raise ParamError("Vector id array is empty or not a list")
 
-                calc_type  = _TYPE_IDS
+                calc_type = _TYPE_IDS
                 if isinstance(ids[0], str):
                     request_op.id_array.id_array.str_id.data.extend(ids)
                 else:
@@ -911,7 +907,8 @@ class Prepare:
         type_left, dim_left = extract_vectors(vectors_left, request.op_left, True)
         type_right, dim_right = extract_vectors(vectors_right, request.op_right, False)
 
-        if (type_left == _TYPE_FLOAT and type_right == _TYPE_BIN) or (type_left == _TYPE_BIN and type_right == _TYPE_FLOAT):
+        if (type_left == _TYPE_FLOAT and type_right == _TYPE_BIN) or (
+                type_left == _TYPE_BIN and type_right == _TYPE_FLOAT):
             raise ParamError("Cannot calculate distance between float vectors and binary vectors")
 
         if (type_left != _TYPE_IDS and type_right != _TYPE_IDS) and dim_left != dim_right:

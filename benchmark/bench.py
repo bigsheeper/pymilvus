@@ -4,7 +4,7 @@ import time
 import gc
 import numpy as np
 from pymilvus import connections, Collection, CollectionSchema, FieldSchema, DataType
-from config import TopK, NQ, Nprobe, NumberOfTestRun, collection_name, field_name, dim, nb, batch, thread_nums
+from config import TopK, NQ, Nprobe, NumberOfTestRun, collection_name, field_name, dim, nb, batch, thread_nums, ef
 
 connections.connect("default")
 
@@ -22,9 +22,9 @@ def time_costing(func):
 
 # @time_costing
 def search(collection, query_entities, field_name, topK, nprobe):
-    search_params = {"metric_type": "L2", "params": {"ef": 50}}
-    # res = collection.search(query_entities, field_name, search_params, limit=topK, consistency_level=CONSISTENCY_EVENTUALLY)
-    res = collection.search(query_entities, field_name, search_params, limit=topK)
+    search_params = {"metric_type": "L2", "params": {"ef": ef}}
+    res = collection.search(query_entities, field_name, search_params, limit=topK, consistency_level=CONSISTENCY_EVENTUALLY)
+    # res = collection.search(query_entities, field_name, search_params, limit=topK)
 
 
 def generate_entities(dim, nb) -> list:

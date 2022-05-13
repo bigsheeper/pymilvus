@@ -23,7 +23,11 @@ def time_costing(func):
 # @time_costing
 def search(collection, query_entities, field_name, topK, nprobe):
     search_params = {"metric_type": "L2", "params": {"ef": ef}}
-    res = collection.search(query_entities, field_name, search_params, limit=topK, consistency_level=CONSISTENCY_EVENTUALLY)
+    # res = collection.search(query_entities, field_name, search_params, limit=topK, consistency_level=CONSISTENCY_EVENTUALLY, partition_names=["partition_1"])
+    # res = collection.search(query_entities, field_name, search_params, expr="pk in [1, 10, 100, 1000, 10000, 100000, 1000000]", limit=topK, consistency_level=CONSISTENCY_EVENTUALLY, partition_names=["partition_1"])
+    res = collection.search(query_entities, field_name, search_params, limit=topK, consistency_level=CONSISTENCY_EVENTUALLY, partition_names=["partition_1"])
+    # res = collection.search(query_entities, field_name, search_params, limit=topK, consistency_level=CONSISTENCY_EVENTUALLY, partition_names=["partition_1", "partition_2", "partition_3", "partition_4", "partition_5", "partition_6", "partition_7", "partition_8", "partition_9", "partition_10"])
+    # res = collection.search(query_entities, field_name, search_params, limit=topK, consistency_level=CONSISTENCY_EVENTUALLY)
     # res = collection.search(query_entities, field_name, search_params, limit=topK)
 
 
@@ -34,21 +38,23 @@ def generate_entities(dim, nb) -> list:
 if __name__ == "__main__":
     coll = Collection(collection_name)
 
-    coll.release()
-    coll.load()
+    # coll.release()
+    # coll.load()
 
     print("topK nq avg_latency/{:d}".format(NumberOfTestRun))
     for topK in TopK:
         for nq in NQ:
             for nprobe in Nprobe:
                 # print("nprobe = ", nprobe, "topK = ", topK, "nq = ", nq)
-                start = time.time()
+                sum = 0
                 for _ in range(NumberOfTestRun):
                     query_entities = generate_entities(dim, nq)
+                    start = time.time()
                     search(coll, query_entities, field_name, topK, nprobe)
+                    end = time.time()
+                    sum += end-start
 
-                end = time.time()
                 # print("nprobe = ", nprobe, "topK = ", topK, "nq = ", nq, "test times = ", NumberOfTestRun, "total time = ",
                 #       end - start, "avg time = ", (end-start)/NumberOfTestRun)
                 # print("topK = ", topK, "nq = ", nq, "times = ", NumberOfTestRun, "avg time = ", (end-start)/NumberOfTestRun)
-                print(topK, " ", nq, " ", (end-start)/NumberOfTestRun)
+                print(topK, " ", nq, " ", sum/NumberOfTestRun)

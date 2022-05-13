@@ -4,7 +4,7 @@ import time
 import gc
 import numpy as np
 from pymilvus import connections, Collection, CollectionSchema, FieldSchema, DataType
-from config import TopK, NQ, Nprobe, NumberOfTestRun, collection_name, field_name, dim, nb, batch, thread_nums
+from config import TopK, NQ, Nprobe, NumberOfTestRun, collection_name, field_name, dim, nb, batch, thread_nums, num_partitions
 
 connections.connect("default")
 
@@ -26,7 +26,7 @@ def create_collection(collection_name, field_name, dim, partition=None, auto_id=
     field = FieldSchema(name=field_name, dtype=DataType.FLOAT_VECTOR, dim=dim)
     schema = CollectionSchema(fields=[pk, field], description="example collection")
 
-    collection = Collection(name=collection_name, schema=schema)
+    collection = Collection(name=collection_name, schema=schema, shards_num=1)
     return collection
 
 
@@ -49,6 +49,9 @@ def insert(collection, entities):
     mr = collection.insert([entities])
     # print(mr)
 
+@time_costing
+def insert_partition(partition, entities):
+    mr = partition.insert([entities])
 
 def gen_data_and_insert(collection, nb, batch, dim):
     for i in range(int(nb/batch)):
@@ -56,12 +59,18 @@ def gen_data_and_insert(collection, nb, batch, dim):
         insert(collection, entities)
         gc.collect()
 
+def get_partition_name(p_index):
+    return "partition_" + str(p_index)
 
 def insert_parallel(collection, nb, dim, batch, thread_num=1):
-    for i in range(int(nb/batch)):
-        entities = generate_entities(dim, batch)
-        insert(collection, entities)
-        gc.collect()
+    for p in range(num_partitions):
+        partition_name = get_partition_name(p)
+        partition = collection.create_partition(partition_name)
+        for i in range(int(nb/num_partitions/batch)):
+            entities = generate_entities(dim, batch)
+            # insert(collection, entities)
+            insert_partition(partition, entities)
+            gc.collect()
 
 
 def generate_entities(dim, nb) -> list:

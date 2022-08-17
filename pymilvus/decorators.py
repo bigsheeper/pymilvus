@@ -21,7 +21,7 @@ def deprecated(func):
     return inner
 
 
-def retry_on_rpc_failure(retry_times=10, initial_back_off=0.01, max_back_off=60, back_off_multiplier=3, retry_on_deadline=True):
+def retry_on_rpc_failure(retry_times=10, initial_back_off=0.01, max_back_off=60, back_off_multiplier=3, retry_on_deadline=True, retry_on_resource_exhausted=True):
     # the default 7 retry_times will cost about 26s
     def wrapper(func):
         @functools.wraps(func)
@@ -49,10 +49,13 @@ def retry_on_rpc_failure(retry_times=10, initial_back_off=0.01, max_back_off=60,
                 except grpc.RpcError as e:
                     # DEADLINE_EXCEEDED means that the task wat not completed
                     # UNAVAILABLE means that the service is not reachable currently
+                    # RESOURCE_EXHAUSTED: Some resource has been exhausted, perhaps a per-user quota, or perhaps the entire file system is out of space
                     # Reference: https://grpc.github.io/grpc/python/grpc.html#grpc-status-code
-                    if e.code() != grpc.StatusCode.DEADLINE_EXCEEDED and e.code() != grpc.StatusCode.UNAVAILABLE:
+                    if e.code() != grpc.StatusCode.DEADLINE_EXCEEDED and e.code() != grpc.StatusCode.UNAVAILABLE and e.code() != grpc.StatusCode.RESOURCE_EXHAUSTED:
                         raise MilvusException(Status.UNEXPECTED_ERROR, str(e))
                     if not retry_on_deadline and e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+                        raise MilvusException(Status.UNEXPECTED_ERROR, str(e))
+                    if not retry_on_resource_exhausted and e.code() == grpc.StatusCode.RESOURCE_EXHAUSTED:
                         raise MilvusException(Status.UNEXPECTED_ERROR, str(e))
                     if timeout(start_time):
                         timeout_msg = f"Retry timeout: {retry_timeout}s" if retry_timeout is not None \

@@ -110,7 +110,16 @@ class MetricsCollector:
         total = len(inserts)
         failures = sum(1 for r in inserts if not r.success)
         successes = total - failures
-        failure_rate = failures / total if total > 0 else 0.0
+        overall_failure_rate = failures / total if total > 0 else 0.0
+        outside_total = sum(
+            1 for r in inserts
+            if not self._in_switchover_window(r.timestamp, switchover_window_s)
+        )
+        outside_failures = sum(
+            1 for r in inserts
+            if not r.success and not self._in_switchover_window(r.timestamp, switchover_window_s)
+        )
+        outside_failure_rate = outside_failures / outside_total if outside_total > 0 else 0.0
 
         # Split latencies into steady-state vs switchover-window
         steady_latencies = []
@@ -136,8 +145,10 @@ class MetricsCollector:
             f"Clusters: by-dev1 (localhost:19530) <-> by-dev2 (localhost:19531)",
             "",
             "--- Insert Summary ---",
-            f"Total: {total} | Success: {successes} | Failed: {failures} | "
-            f"Failure Rate: {failure_rate:.2%}",
+            f"Total: {total} | Success: {successes} | Failed: {failures}",
+            f"Overall Failure Rate: {overall_failure_rate:.2%} | "
+            f"Outside-Window Rate: {outside_failure_rate:.2%} "
+            f"({outside_failures}/{outside_total})",
             "",
             "--- Latency (ms) ---",
             f"{'':18s}{'Steady State':>14s}    {'Switchover Window':>20s}",
@@ -179,7 +190,6 @@ class MetricsCollector:
 
         total = len(inserts)
         failures = sum(1 for r in inserts if not r.success)
-        failure_rate = failures / total if total > 0 else 0.0
 
         # Failures outside switchover windows
         outside_failures = sum(
@@ -187,6 +197,15 @@ class MetricsCollector:
             for r in inserts
             if not r.success and not self._in_switchover_window(r.timestamp, switchover_window_s)
         )
+
+        # Failure rate is calculated OUTSIDE switchover windows only.
+        # Failures during windows are expected and checked via outside_failures.
+        outside_total = sum(
+            1
+            for r in inserts
+            if not self._in_switchover_window(r.timestamp, switchover_window_s)
+        )
+        failure_rate = outside_failures / outside_total if outside_total > 0 else 0.0
 
         steady_latencies = [
             r.latency_ms

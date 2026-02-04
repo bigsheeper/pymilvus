@@ -9,6 +9,9 @@ from tests.e2e_global_client.topology_server import CLUSTER_A, CLUSTER_B, Topolo
 
 logger = logging.getLogger(__name__)
 
+# Shorter refresh interval for testing (default is 300s = 5min)
+TEST_REFRESH_INTERVAL = 10  # seconds
+
 
 def pytest_addoption(parser):
     parser.addoption("--switchover-interval", type=int, default=120,
@@ -63,27 +66,32 @@ def global_client(topology_server):
     """Create a MilvusClient that connects through the global client path."""
     mock_url = topology_server.url
 
-    # Patch is_global_endpoint at the import site in grpc_handler
-    # so GrpcHandler.__init__ takes the global path for our mock URL
-    original_is_global = None
-
     def patched_is_global(uri):
         if uri and mock_url in uri:
             return True
-        if original_is_global:
-            return original_is_global(uri)
         return False
 
     with patch(
         "pymilvus.client.grpc_handler.is_global_endpoint",
         side_effect=patched_is_global,
     ):
-        # Also patch in orm.connections where it's imported
         with patch(
             "pymilvus.orm.connections.is_global_endpoint",
             side_effect=patched_is_global,
         ):
             client = MilvusClient(uri=mock_url, token="root:Milvus")
+
+    # Shorten the topology refresh interval for testing.
+    # The default is 300s (5min), which is too long for E2E tests.
+    # We must stop and restart the refresher because the thread is already
+    # sleeping in wait(300) — simply changing _refresh_interval won't wake it.
+    handler = client._get_connection()
+    if handler._global_stub and handler._global_stub._refresher:
+        refresher = handler._global_stub._refresher
+        refresher.stop()
+        refresher._refresh_interval = TEST_REFRESH_INTERVAL
+        refresher.start()
+        logger.info(f"Restarted topology refresher with interval {TEST_REFRESH_INTERVAL}s")
 
     yield client
     client.close()

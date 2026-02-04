@@ -57,16 +57,16 @@ def _insert_loop(client, collector, stop_event: threading.Event):
 def _switchover_schedule(test_duration: int, fast_interval: int):
     """Generate switchover timestamps for 2 fast + 2 slow phases.
 
-    Phase 1 (fast): 2 switchovers at fast_interval spacing.
+    Phase 1 (fast): 2 switchovers at fast_interval spacing, starting at fast_interval.
     Phase 2 (slow): 2 switchovers evenly dividing remaining time.
     """
     times = []
-    # Phase 1: 2 fast switchovers
+    # Phase 1: 2 fast switchovers (first one at fast_interval to allow steady-state inserts)
     for i in range(2):
-        times.append(fast_interval * i)
+        times.append(fast_interval * (i + 1))
 
     # Phase 2: 2 slow switchovers over remaining time
-    fast_end = fast_interval * 2
+    fast_end = fast_interval * 3
     remaining = test_duration - fast_end
     slow_interval = remaining // 2
     for i in range(2):

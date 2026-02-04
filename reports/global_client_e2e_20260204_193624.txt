@@ -1,0 +1,41 @@
+
+================================================================
+ Global Client E2E Test Report
+================================================================
+Duration: 92.0s | Switchovers: 4 | Strategy: 2 fast(2min) + 2 slow(4min)
+Clusters: by-dev1 (localhost:19530) <-> by-dev2 (localhost:19531)
+
+--- Insert Summary ---
+Total: 1627 | Success: 1115 | Failed: 512
+Overall Failure Rate: 31.47% | Outside-Window Rate: 0.00% (0/90)
+
+--- Latency (ms) ---
+                    Steady State       Switchover Window
+  p50:                  4.2                     4.1
+  p95:                 11.3                    12.2
+  p99:                 12.0                    14.6
+  max:                 14.0                    23.3
+
+--- Search Summary ---
+Total: 474 | Success: 474 | Failed: 0
+Overall Failure Rate: 0.00% | Outside-Window Rate: 0.00% (0/16)
+
+--- Search Latency (ms) ---
+                    Steady State       Switchover Window
+  p50:                 19.9                    86.8
+  p95:                 84.2                   141.3
+  p99:                171.6                   165.7
+  max:                193.4                   179.5
+
+--- Switchover Events ---
+  #1 [t=21.8s]  by-dev1 -> by-dev2  duration=0.37s  window_failures=150
+  #2 [t=41.8s]  by-dev2 -> by-dev1  duration=0.38s  window_failures=208
+  #3 [t=61.8s]  by-dev1 -> by-dev2  duration=0.38s  window_failures=211
+  #4 [t=76.8s]  by-dev2 -> by-dev1  duration=0.39s  window_failures=212
+
+--- Failure Reasons (Insert + Search) ---
+  [  512] (100.0%)  STREAMING_CODE_REPLICATE_VIOLATION: non-replicate message cannot be received in secondary role
+
+--- Prometheus Metrics ---
+  Endpoint: http://localhost:9200/metrics
+================================================================

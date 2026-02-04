@@ -1,0 +1,27 @@
+
+================================================================
+ Global Client E2E Test Report
+================================================================
+Duration: 721.7s | Switchovers: 4 | Strategy: 2 fast(2min) + 2 slow(4min)
+Clusters: by-dev1 (localhost:19530) <-> by-dev2 (localhost:19531)
+
+--- Insert Summary ---
+Total: 12999 | Success: 12378 | Failed: 621
+Overall Failure Rate: 4.78% | Outside-Window Rate: 0.00% (0/10827)
+
+--- Latency (ms) ---
+                    Steady State       Switchover Window
+  p50:                  5.1                     5.1
+  p95:                  7.3                     7.3
+  p99:                 11.0                    12.2
+  max:                 53.9                    26.0
+
+--- Switchover Events ---
+  #1 [t=121.7s]  by-dev1 -> by-dev2  duration=0.23s  window_failures=151
+  #2 [t=241.7s]  by-dev2 -> by-dev1  duration=0.30s  window_failures=154
+  #3 [t=361.7s]  by-dev1 -> by-dev2  duration=0.24s  window_failures=155
+  #4 [t=541.7s]  by-dev2 -> by-dev1  duration=0.28s  window_failures=161
+
+--- Prometheus Metrics ---
+  Endpoint: http://localhost:9200/metrics
+================================================================

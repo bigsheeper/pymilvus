@@ -1,0 +1,151 @@
+
+================================================================
+ Global Client E2E Test Report
+================================================================
+Duration: 721.9s | Switchovers: 4 | Strategy: 2 fast(2min) + 2 slow(4min)
+Clusters: by-dev1 (localhost:19530) <-> by-dev2 (localhost:19531)
+
+--- Insert Summary ---
+Total: 12299 | Success: 11717 | Failed: 582
+Overall Failure Rate: 4.73% | Outside-Window Rate: 0.00% (0/10239)
+
+--- Latency (ms) ---
+                    Steady State       Switchover Window
+  p50:                  6.7                     7.0
+  p95:                 14.1                    13.7
+  p99:                 19.4                    17.0
+  max:                 76.5                    27.3
+
+--- Search Summary ---
+Total: 5433 | Success: 5433 | Failed: 0
+Overall Failure Rate: 0.00% | Outside-Window Rate: 0.00% (0/4482)
+
+--- Search Latency (ms) ---
+                    Steady State       Switchover Window
+  p50:                 26.0                    22.6
+  p95:                 81.8                    48.8
+  p99:                134.7                    58.9
+  max:                198.7                    68.5
+
+--- Switchover Events ---
+  #1 [t=121.9s]  by-dev1 -> by-dev2  duration=0.33s  window_failures=143
+  #2 [t=241.9s]  by-dev2 -> by-dev1  duration=0.31s  window_failures=146
+  #3 [t=361.9s]  by-dev1 -> by-dev2  duration=0.30s  window_failures=145
+  #4 [t=541.9s]  by-dev2 -> by-dev1  duration=0.33s  window_failures=148
+
+--- Failure Reasons (Insert) ---
+  [  582] (100.0%)  STREAMING_CODE_REPLICATE_VIOLATION: non-replicate message cannot be received in secondary role
+
+--- Prometheus Metrics ---
+  Endpoint: http://localhost:9200/metrics
+================================================================
+
+
+  - Insert：共 12,299 次，成功率 95.27%，切换窗口外失败率 0%                        
+  - Search：共 5,433 次，全部成功，零失败
+  - 切换：4 次切换均成功，每次耗时约 0.3 秒                                         
+  - 所有失败均发生在切换窗口内，错误类型为                             
+  STREAMING_CODE_REPLICATE_VIOLATION（写操作被发送到了 secondary
+  节点），属于预期行为
+  - Search 在切换期间不受影响，因为读操作在 primary 和 secondary 上都可以正常执行
+  - 延迟表现正常：insert p50=6.7ms，search p50=26ms
+
+  结论：Global Client
+  在主备切换场景下表现符合预期，切换窗口外零失败，读写操作均能自动恢复。
+
+
+
+Global Client 后续行动建议                                                        
+                                                                                    
+  一、必须修复的 Bug                                                                
+
+  1. search() 方法重复装饰器 (grpc_handler.py:1223-1224)                            
+
+  @retry_on_rpc_failure()  # 第一层
+  @retry_on_rpc_failure()  # 第二层 — 重复！
+  def search(self, ...):
+
+  search() 被 @retry_on_rpc_failure() 装饰了两次，意味着最多会重试 75×75 = 5625
+  次，指数退避也被叠加计算。这会导致 search
+  在遇到可重试错误时耗费远超预期的时间和资源。应该删掉一个。
+
+  二、核心能力提升（建议推动产品侧改进）
+
+  2. 业务错误触发拓扑刷新
+
+  当前 _handle_global_connection_error 只处理 grpc.StatusCode.UNAVAILABLE：
+
+  if error.code() == grpc.StatusCode.UNAVAILABLE:
+      self._global_stub.trigger_refresh()
+
+  但切换后最常见的错误是 STREAMING_CODE_REPLICATE_VIOLATION，这是
+  MilvusException（业务异常），不是 grpc.RpcError，根本不会进入这个
+  handler。客户端只能被动等待后台拓扑刷新（默认 300
+  秒），这就是切换窗口内产生大量失败的根本原因。
+
+  建议：在 @retry_on_rpc_failure 装饰器中增加对特定业务错误码的识别（如
+  STREAMING_CODE_REPLICATE_VIOLATION），捕获到后主动触发
+  trigger_refresh()，并在刷新后重试。这能将切换窗口的失败时间从 ~10
+  秒（刷新间隔）降到 ~1 秒。
+
+  3. 默认刷新间隔过长
+
+  默认 300 秒的拓扑刷新间隔，对于非 UNAVAILABLE 类错误意味着最长 5
+  分钟的故障检测延迟。建议：
+  - 生产环境默认值降低到 30-60 秒
+  - 提供用户可配置的参数
+
+  三、架构层面优化
+
+  4. 读写分离
+
+  E2E 测试证实：search 在切换期间零失败，因为 secondary
+  也能处理读请求。当前全局客户端所有操作都路由到 primary，可以考虑：
+  - 读操作（search/query）路由到任意可用集群
+  - 写操作（insert/upsert/delete）路由到 primary
+  - 这能提升读操作的可用性和负载分散能力
+
+  5. 写操作失败重试策略
+
+  切换窗口内写操作失败后，当前行为是抛异常给用户。可以考虑：
+  - 检测到 CDC 相关错误后，先刷新拓扑，再自动重试到新 primary
+  - 对用户完全透明，减少业务层的重试逻辑
+
+  四、E2E 测试增强
+
+  6. 扩展测试覆盖的操作类型
+
+  当前只测了 insert 和 search，建议增加：
+  - upsert / delete — 同为写操作，验证行为一致
+  - query（标量过滤查询）— 验证与 search 一样零失败
+
+  7. 故障场景测试
+
+  当前只测了正常切换，建议增加：
+  - 集群宕机场景（kill 一个 standalone，验证自动切换）
+  - 网络分区模拟（iptables 或 tc 限制连通性）
+  - 拓扑服务不可用时的降级行为
+
+  8. 长时间稳定性测试
+
+  当前最长 12 分钟，建议增加：
+  - 1 小时以上的稳定性测试
+  - 多轮切换（10+ 次），验证无内存泄漏、连接泄漏
+
+  五、优先级排序
+  ┌────────┬────────────────────────┬────────────────────────┐
+  │ 优先级 │          事项          │          原因          │
+  ├────────┼────────────────────────┼────────────────────────┤
+  │ P0     │ 修复 search 重复装饰器 │ 已确认的 bug，影响生产 │
+  ├────────┼────────────────────────┼────────────────────────┤
+  │ P0     │ 业务错误触发拓扑刷新   │ 切换窗口失败的根本原因 │
+  ├────────┼────────────────────────┼────────────────────────┤
+  │ P1     │ 降低默认刷新间隔       │ 减少故障检测延迟       │
+  ├────────┼────────────────────────┼────────────────────────┤
+  │ P1     │ 扩展 E2E 测试操作类型  │ 验证完整性             │
+  ├────────┼────────────────────────┼────────────────────────┤
+  │ P2     │ 读写分离               │ 架构优化，提升可用性   │
+  ├────────┼────────────────────────┼────────────────────────┤
+  │ P2     │ 故障场景测试           │ 提升测试覆盖度         │
+  └────────┴────────────────────────┴────────────────────────┘
+

@@ -30,6 +30,10 @@ def pytest_addoption(parser):
                      help="Prometheus metrics port (default: 9200)")
     parser.addoption("--topo-server-port", type=int, default=8080,
                      help="Mock topology server port (default: 8080)")
+    parser.addoption("--report-dir", type=str, default=None,
+                     help="Directory to save test reports (default: None, stdout only)")
+    parser.addoption("--keep-metrics-server", action="store_true", default=False,
+                     help="Keep Prometheus metrics server running after test for Grafana scraping")
 
 
 @pytest.fixture(scope="session")
@@ -43,6 +47,8 @@ def test_config(request):
         "standby_port": request.config.getoption("--standby-port"),
         "metrics_port": request.config.getoption("--metrics-port"),
         "topo_server_port": request.config.getoption("--topo-server-port"),
+        "report_dir": request.config.getoption("--report-dir"),
+        "keep_metrics_server": request.config.getoption("--keep-metrics-server"),
     }
 
 

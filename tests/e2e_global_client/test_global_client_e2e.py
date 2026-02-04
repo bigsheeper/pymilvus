@@ -1,11 +1,13 @@
 import logging
+import os
 import random
 import threading
 import time
+from datetime import datetime
 
 import pytest
 
-from tests.e2e_global_client.metrics_collector import InsertResult, SwitchoverEvent
+from tests.e2e_global_client.metrics_collector import InsertResult, SearchResult, SwitchoverEvent
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,44 @@ def _generate_insert_data(batch_size: int = 10) -> list:
         {"id": int(time.time_ns()) + i, "vector": [random.random() for _ in range(DIM)]}
         for i in range(batch_size)
     ]
+
+
+def _generate_search_data() -> list:
+    """Generate a single random vector for search."""
+    return [[random.random() for _ in range(DIM)]]
+
+
+def _search_loop(client, collector, stop_event: threading.Event, initial_delay: float = 3.0):
+    """Continuously search, recording latency and failures."""
+    # Wait for initial data to be inserted before starting searches
+    if initial_delay > 0:
+        stop_event.wait(initial_delay)
+        if stop_event.is_set():
+            return
+        logger.info(f"Search loop started (after {initial_delay}s warmup)")
+
+    while not stop_event.is_set():
+        data = _generate_search_data()
+        start = time.perf_counter()
+        ts = time.time()
+        try:
+            client.search(
+                collection_name=COLLECTION_NAME,
+                data=data,
+                limit=10,
+                output_fields=["id"],
+            )
+            latency_ms = (time.perf_counter() - start) * 1000.0
+            collector.record_search(SearchResult(
+                timestamp=ts, latency_ms=latency_ms, success=True,
+            ))
+        except Exception as e:
+            latency_ms = (time.perf_counter() - start) * 1000.0
+            collector.record_search(SearchResult(
+                timestamp=ts, latency_ms=latency_ms, success=False, error=str(e),
+            ))
+            logger.warning(f"Search failed: {e}")
+        time.sleep(0.1)
 
 
 def _insert_loop(client, collector, stop_event: threading.Event):
@@ -94,7 +134,7 @@ class TestGlobalClientE2E:
         topology_server.init_replication()
         _create_collection(global_client)
         metrics_collector.set_initial_primary(
-            f"localhost:{test_config['primary_port']}"
+            topology_server.state.primary.cluster_id
         )
 
         # Schedule switchovers
@@ -110,6 +150,14 @@ class TestGlobalClientE2E:
         )
         insert_thread.start()
         logger.info("Insert loop started")
+
+        # Start search loop (with 3s warmup delay for data to be inserted)
+        search_thread = threading.Thread(
+            target=_search_loop,
+            args=(global_client, metrics_collector, stop_event),
+            daemon=True,
+        )
+        search_thread.start()
 
         # Execute switchovers on schedule
         test_start = time.time()
@@ -155,13 +203,24 @@ class TestGlobalClientE2E:
             logger.info(f"Waiting {remaining:.0f}s for remaining test duration...")
             time.sleep(remaining)
 
-        # Stop insert loop
+        # Stop insert and search loops
         stop_event.set()
         insert_thread.join(timeout=10)
+        search_thread.join(timeout=10)
 
         # Generate and print report
         report = metrics_collector.generate_report(switchover_window_s=window_s)
         print(report)
+
+        # Save report to file if --report-dir is set
+        report_dir = test_config.get("report_dir")
+        if report_dir:
+            os.makedirs(report_dir, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_path = os.path.join(report_dir, f"global_client_e2e_{ts}.txt")
+            with open(report_path, "w") as f:
+                f.write(report)
+            logger.info(f"Report saved to {report_path}")
 
         # Cleanup
         try:
@@ -185,6 +244,14 @@ class TestGlobalClientE2E:
             f"(max allowed: 30000ms)"
         )
 
+        # Search assertions
+        assert results["search_outside_failures"] == 0, (
+            f"{results['search_outside_failures']} search failures outside switchover windows"
+        )
+        assert results["search_failure_rate"] <= max_failure_rate, (
+            f"Search failure rate {results['search_failure_rate']:.2%} exceeds max {max_failure_rate:.2%}"
+        )
+
         # Soft assertions (warnings only)
         if results["window_p99"] > 5000:
             logger.warning(
@@ -193,6 +260,29 @@ class TestGlobalClientE2E:
             )
         if results["steady_p50"] > 100:
             logger.warning(
-                f"SOFT: p50 steady-state latency "
+                f"SOFT: insert p50 steady-state latency "
                 f"({results['steady_p50']:.0f}ms) exceeds 100ms"
             )
+        if results["search_window_p99"] > 5000:
+            logger.warning(
+                f"SOFT: search p99 latency during switchover windows "
+                f"({results['search_window_p99']:.0f}ms) exceeds 5000ms"
+            )
+        if results["search_steady_p50"] > 100:
+            logger.warning(
+                f"SOFT: search p50 steady-state latency "
+                f"({results['search_steady_p50']:.0f}ms) exceeds 100ms"
+            )
+
+        # Keep metrics server running for Grafana if requested
+        if test_config.get("keep_metrics_server"):
+            metrics_port = test_config["metrics_port"]
+            logger.info(
+                f"Metrics server kept alive at http://localhost:{metrics_port}/metrics "
+                f"— press Ctrl+C to stop"
+            )
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                logger.info("Metrics server stopping")

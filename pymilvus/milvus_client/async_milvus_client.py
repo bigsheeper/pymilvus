@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Type, Union
 from pymilvus.client.abstract import AnnSearchRequest, BaseRanker
 from pymilvus.client.connection_manager import AsyncConnectionManager, ConnectionConfig
 from pymilvus.client.constants import DEFAULT_CONSISTENCY_LEVEL
+from pymilvus.client.search_aggregation import SearchAggregation
 from pymilvus.client.types import (
     ExceptionsMessage,
     LoadState,
@@ -35,7 +36,7 @@ from .async_optimize_task import AsyncOptimizeTask
 from .base import BaseMilvusClient
 from .check import validate_param
 from .index import IndexParam, IndexParams
-from .optimize_task import OptimizeResult, ProgressStage
+from .optimize_task import OptimizeResult, ProgressStage, parse_target_size
 
 
 class AsyncMilvusClient(BaseMilvusClient):
@@ -529,6 +530,7 @@ class AsyncMilvusClient(BaseMilvusClient):
         partition_names: Optional[List[str]] = None,
         **kwargs,
     ) -> List[List[dict]]:
+        validate_param("collection_name", collection_name, str)
         conn = await self._get_connection()
         return await conn.hybrid_search(
             collection_name,
@@ -555,8 +557,10 @@ class AsyncMilvusClient(BaseMilvusClient):
         anns_field: Optional[str] = None,
         ranker: Optional[Union[Function, FunctionScore]] = None,
         ids: Optional[Union[List[int], List[str], str, int]] = None,
+        search_aggregation: Optional[SearchAggregation] = None,
         **kwargs,
     ) -> List[List[dict]]:
+        validate_param("collection_name", collection_name, str)
         conn = await self._get_connection()
         return await conn.search(
             collection_name=collection_name,
@@ -571,6 +575,7 @@ class AsyncMilvusClient(BaseMilvusClient):
             expr_params=kwargs.pop("filter_params", {}),
             timeout=timeout,
             ranker=ranker,
+            search_aggregation=search_aggregation,
             context=self._generate_call_context(**kwargs),
             **kwargs,
         )
@@ -1534,6 +1539,7 @@ class AsyncMilvusClient(BaseMilvusClient):
         )
 
     async def flush(self, collection_name: str, timeout: Optional[float] = None, **kwargs):
+        validate_param("collection_name", collection_name, str)
         conn = await self._get_connection()
         await conn.flush(
             [collection_name],
@@ -1612,14 +1618,48 @@ class AsyncMilvusClient(BaseMilvusClient):
         collection_name: str,
         is_clustering: Optional[bool] = False,
         is_l0: Optional[bool] = False,
+        target_size: Optional[int] = None,
+        target_size_unit: str = "mb",
         timeout: Optional[float] = None,
         **kwargs,
     ) -> int:
+        """Compact merge the small segments in a collection.
+
+        Args:
+            collection_name (str): The name of the collection to compact.
+            is_clustering (``bool``, optional): Option to trigger clustering compaction.
+            is_l0 (``bool``, optional): Option to trigger L0 compaction.
+            target_size (``int``, optional): Target segment size after compaction. Must be a
+                positive integer. The unit is specified by ``target_size_unit`` (default MB).
+                If not provided, the server uses its default target size.
+            target_size_unit (``str``, optional): Unit for ``target_size``. Supported values:
+                ``"b"``, ``"kb"``, ``"mb"`` (default), ``"gb"``, ``"tb"``, ``"pb"``.
+                The value is converted to MB before being sent to the server.
+            timeout (``float``, optional): An optional duration of time in seconds to allow
+                for the RPC. When timeout is set to None, client waits until server response
+                or error occur.
+
+        Raises:
+            ParamError: If ``target_size`` is not an int or ``target_size_unit`` is invalid.
+            MilvusException: If anything goes wrong.
+
+        Returns:
+            int: An integer represents the server's compaction job. You can use this job ID
+            for subsequent state inquiries.
+        """
+        if target_size is not None:
+            if not isinstance(target_size, int):
+                raise ParamError(
+                    message=f"target_size must be an int, got {type(target_size).__name__}"
+                )
+            target_size = parse_target_size(f"{target_size}{target_size_unit}")
+
         conn = await self._get_connection()
         return await conn.compact(
             collection_name,
             is_clustering=is_clustering,
             is_l0=is_l0,
+            target_size=target_size,
             timeout=timeout,
             context=self._generate_call_context(**kwargs),
             **kwargs,
@@ -1722,6 +1762,31 @@ class AsyncMilvusClient(BaseMilvusClient):
             clusters=clusters,
             cross_cluster_topology=cross_cluster_topology,
             force_promote=force_promote,
+            timeout=timeout,
+            context=self._generate_call_context(**kwargs),
+            **kwargs,
+        )
+
+    async def get_replicate_configuration(
+        self,
+        timeout: Optional[float] = None,
+        **kwargs,
+    ):
+        """
+        Get replication configuration from Milvus.
+
+        Args:
+            timeout (float, optional): An optional duration of time in seconds to allow for the RPC
+            **kwargs: Additional arguments
+
+        Returns:
+            ReplicateConfiguration: The current replication configuration
+
+        Raises:
+            MilvusException: If the operation fails
+        """
+        conn = await self._get_connection()
+        return await conn.get_replicate_configuration(
             timeout=timeout,
             context=self._generate_call_context(**kwargs),
             **kwargs,
@@ -1967,18 +2032,24 @@ class AsyncMilvusClient(BaseMilvusClient):
 
     async def create_snapshot(
         self,
-        collection_name: str,
         snapshot_name: str,
+        collection_name: str,
+        db_name: str = "",
         description: str = "",
+        compaction_protection_seconds: int = 0,
         timeout: Optional[float] = None,
         **kwargs,
     ) -> None:
         """Create a snapshot for a collection (async).
 
         Args:
-            collection_name (str): The name of the collection to snapshot.
             snapshot_name (str): The name of the snapshot. Must be unique.
+            collection_name (str): The name of the collection to snapshot.
             description (str): Optional description for the snapshot.
+            db_name (str): Optional database name (defaults to active db).
+            compaction_protection_seconds (int): Duration in seconds during which the
+                snapshot-referenced segments are protected from compaction.
+                0 = no protection (default).
             timeout (Optional[float]): An optional duration of time in seconds to allow for the RPC.
             **kwargs: Additional arguments.
 
@@ -1986,9 +2057,10 @@ class AsyncMilvusClient(BaseMilvusClient):
             >>> client = AsyncMilvusClient(uri="http://localhost:19530")
             >>> await client.flush(collection_name="my_collection")
             >>> await client.create_snapshot(
-            ...     collection_name="my_collection",
             ...     snapshot_name="backup_20240101",
-            ...     description="Daily backup"
+            ...     collection_name="my_collection",
+            ...     description="Daily backup",
+            ...     compaction_protection_seconds=3600,
             ... )
         """
         conn = await self._get_connection()
@@ -1996,6 +2068,8 @@ class AsyncMilvusClient(BaseMilvusClient):
             snapshot_name=snapshot_name,
             collection_name=collection_name,
             description=description,
+            db_name=db_name,
+            compaction_protection_seconds=compaction_protection_seconds,
             timeout=timeout,
             context=self._generate_call_context(**kwargs),
             **kwargs,
@@ -2004,6 +2078,8 @@ class AsyncMilvusClient(BaseMilvusClient):
     async def drop_snapshot(
         self,
         snapshot_name: str,
+        collection_name: str,
+        db_name: str = "",
         timeout: Optional[float] = None,
         **kwargs,
     ) -> None:
@@ -2011,12 +2087,17 @@ class AsyncMilvusClient(BaseMilvusClient):
 
         Args:
             snapshot_name (str): The name of the snapshot to drop.
+            collection_name (str): The collection the snapshot belongs to
+                (required for collection-level authorization).
+            db_name (str): Optional database name (defaults to active db).
             timeout (Optional[float]): An optional duration of time in seconds to allow for the RPC.
             **kwargs: Additional arguments.
         """
         conn = await self._get_connection()
         await conn.drop_snapshot(
             snapshot_name=snapshot_name,
+            collection_name=collection_name,
+            db_name=db_name,
             timeout=timeout,
             context=self._generate_call_context(**kwargs),
             **kwargs,
@@ -2025,6 +2106,7 @@ class AsyncMilvusClient(BaseMilvusClient):
     async def list_snapshots(
         self,
         collection_name: str = "",
+        db_name: str = "",
         timeout: Optional[float] = None,
         **kwargs,
     ) -> List[str]:
@@ -2032,6 +2114,7 @@ class AsyncMilvusClient(BaseMilvusClient):
 
         Args:
             collection_name (str): Optional collection name to filter snapshots.
+            db_name (str): Optional database name (defaults to active db).
             timeout (Optional[float]): An optional duration of time in seconds to allow for the RPC.
             **kwargs: Additional arguments.
 
@@ -2041,6 +2124,7 @@ class AsyncMilvusClient(BaseMilvusClient):
         conn = await self._get_connection()
         return await conn.list_snapshots(
             collection_name=collection_name,
+            db_name=db_name,
             timeout=timeout,
             context=self._generate_call_context(**kwargs),
             **kwargs,
@@ -2049,6 +2133,8 @@ class AsyncMilvusClient(BaseMilvusClient):
     async def describe_snapshot(
         self,
         snapshot_name: str,
+        collection_name: str,
+        db_name: str = "",
         timeout: Optional[float] = None,
         **kwargs,
     ) -> SnapshotInfo:
@@ -2056,6 +2142,9 @@ class AsyncMilvusClient(BaseMilvusClient):
 
         Args:
             snapshot_name (str): The name of the snapshot to describe.
+            collection_name (str): The collection the snapshot belongs to
+                (required for collection-level authorization).
+            db_name (str): Optional database name (defaults to active db).
             timeout (Optional[float]): An optional duration of time in seconds to allow for the RPC.
             **kwargs: Additional arguments.
 
@@ -2065,6 +2154,8 @@ class AsyncMilvusClient(BaseMilvusClient):
         conn = await self._get_connection()
         return await conn.describe_snapshot(
             snapshot_name=snapshot_name,
+            collection_name=collection_name,
+            db_name=db_name,
             timeout=timeout,
             context=self._generate_call_context(**kwargs),
             **kwargs,
@@ -2073,7 +2164,10 @@ class AsyncMilvusClient(BaseMilvusClient):
     async def restore_snapshot(
         self,
         snapshot_name: str,
-        collection_name: str,
+        source_collection_name: str,
+        target_collection_name: str,
+        source_db_name: str = "",
+        target_db_name: str = "",
         timeout: Optional[float] = None,
         **kwargs,
     ) -> int:
@@ -2081,8 +2175,14 @@ class AsyncMilvusClient(BaseMilvusClient):
 
         Args:
             snapshot_name (str): The name of the snapshot to restore.
-            collection_name (str): The name of the target collection to create.
-            timeout (Optional[float]): An optional duration of time in seconds to allow for the RPC.
+            target_collection_name (str): The collection the snapshot will be restored into.
+                Validated server-side; an existing collection causes the restore job to fail.
+            source_collection_name (str): The collection the snapshot belongs to.
+                Required to uniquely identify the snapshot, since snapshot names are only
+                unique within a collection and multiple collections may share the same name.
+            target_db_name (str): Target database name (defaults to active db).
+            source_db_name (str): Source database name (defaults to active db).
+            timeout (Optional[float]): Optional RPC timeout in seconds.
             **kwargs: Additional arguments.
 
         Returns:
@@ -2091,8 +2191,10 @@ class AsyncMilvusClient(BaseMilvusClient):
         conn = await self._get_connection()
         return await conn.restore_snapshot(
             snapshot_name=snapshot_name,
-            collection_name=collection_name,
-            rewrite_data=False,
+            target_collection_name=target_collection_name,
+            source_collection_name=source_collection_name,
+            target_db_name=target_db_name,
+            source_db_name=source_db_name,
             timeout=timeout,
             context=self._generate_call_context(**kwargs),
             **kwargs,
@@ -2125,13 +2227,17 @@ class AsyncMilvusClient(BaseMilvusClient):
     async def list_restore_snapshot_jobs(
         self,
         collection_name: str = "",
+        db_name: str = "",
         timeout: Optional[float] = None,
         **kwargs,
     ) -> List[RestoreSnapshotJobInfo]:
         """List all restore snapshot jobs (async).
 
         Args:
-            collection_name (str): Optional collection name to filter jobs.
+            collection_name (str): Optional target collection name to filter jobs.
+                Pass the name of the collection that was restored into (the target collection).
+                If empty, lists all restore jobs.
+            db_name (str): Optional database name (defaults to active db).
             timeout (Optional[float]): An optional duration of time in seconds to allow for the RPC.
             **kwargs: Additional arguments.
 
@@ -2141,6 +2247,47 @@ class AsyncMilvusClient(BaseMilvusClient):
         conn = await self._get_connection()
         return await conn.list_restore_snapshot_jobs(
             collection_name=collection_name,
+            db_name=db_name,
+            timeout=timeout,
+            context=self._generate_call_context(**kwargs),
+            **kwargs,
+        )
+
+    async def pin_snapshot_data(
+        self,
+        snapshot_name: str,
+        collection_name: str,
+        db_name: str = "",
+        ttl_seconds: int = 0,
+        timeout: Optional[float] = None,
+        **kwargs,
+    ) -> int:
+        """Pin snapshot data to prevent GC during backup/copy (async).
+
+        Returns:
+            int: The pin_id. Pass to ``unpin_snapshot_data`` to release.
+        """
+        conn = await self._get_connection()
+        return await conn.pin_snapshot_data(
+            snapshot_name=snapshot_name,
+            collection_name=collection_name,
+            db_name=db_name,
+            ttl_seconds=ttl_seconds,
+            timeout=timeout,
+            context=self._generate_call_context(**kwargs),
+            **kwargs,
+        )
+
+    async def unpin_snapshot_data(
+        self,
+        pin_id: int,
+        timeout: Optional[float] = None,
+        **kwargs,
+    ) -> None:
+        """Release a pin created by ``pin_snapshot_data`` (async)."""
+        conn = await self._get_connection()
+        await conn.unpin_snapshot_data(
+            pin_id=pin_id,
             timeout=timeout,
             context=self._generate_call_context(**kwargs),
             **kwargs,

@@ -7,6 +7,8 @@ import pytest
 from pymilvus import AnnSearchRequest, RRFRanker
 from pymilvus.client.cache import GlobalCache
 from pymilvus.exceptions import AmbiguousIndexName, MilvusException
+from pymilvus.grpc_gen import common_pb2
+from pymilvus.grpc_gen import milvus_pb2 as milvus_types
 
 from .conftest import make_response
 
@@ -60,6 +62,20 @@ class TestGrpcHandlerUtilityOps:
     def test_get_server_version(self, handler):
         handler._stub.GetVersion.return_value = make_response(version="v2.4.0")
         assert handler.get_server_version() == "v2.4.0"
+
+    def test_get_replicate_configuration(self, handler):
+        mock_config = MagicMock()
+        handler._stub.GetReplicateConfiguration.return_value = make_response(
+            configuration=mock_config
+        )
+
+        result = handler.get_replicate_configuration(timeout=10)
+
+        assert result == mock_config
+        handler._stub.GetReplicateConfiguration.assert_called_once()
+        args, kwargs = handler._stub.GetReplicateConfiguration.call_args
+        assert isinstance(args[0], milvus_types.GetReplicateConfigurationRequest)
+        assert kwargs["timeout"] == 10
 
     def test_get_server_version_with_detail(self, handler):
         """Test get_server_version returns server info dict when detail=True"""
@@ -354,6 +370,18 @@ class TestGrpcHandlerCompactionAdditional:
         handler._stub.ManualCompaction.return_value = make_response(compactionID=111)
         result = handler.compact("coll", is_l0=True)
         assert result == 111
+
+    def test_compact_fallback_on_collection_name_not_found(self, handler):
+        first = make_response(error_code=common_pb2.CollectionNameNotFound)
+        second = make_response(compactionID=999)
+        handler._stub.ManualCompaction.side_effect = [first, second]
+        handler._stub.DescribeCollection.return_value = make_response(collectionID=42)
+
+        result = handler.compact("coll", is_l0=True, target_size=256)
+
+        assert result == 999
+        assert handler._stub.ManualCompaction.call_count == 2
+        handler._stub.DescribeCollection.assert_called_once()
 
 
 class TestGrpcHandlerMisc:

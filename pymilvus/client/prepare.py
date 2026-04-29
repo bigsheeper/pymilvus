@@ -45,10 +45,12 @@ from .constants import (
     QUERY_GROUP_BY_FIELDS,
     RANK_GROUP_SCORER,
     REDUCE_STOP_FOR_BEST,
+    SEARCH_AGGREGATION,
     STRICT_CAST,
     STRICT_GROUP_SIZE,
 )
 from .entity_helper import convert_to_array, convert_to_array_of_vector
+from .search_aggregation import SearchAggregation
 from .types import (
     DataType,
     PlaceholderType,
@@ -1500,10 +1502,12 @@ class Prepare:
         use_default_consistency: bool = True,
         **kwargs,
     ) -> milvus_types.SearchRequest:
+        param = dict(param)
         ignore_growing = param.get("ignore_growing", False) or kwargs.get("ignore_growing", False)
         params = param.get("params", {})
         if not isinstance(params, dict):
             raise ParamError(message=f"Search params must be a dict, got {type(params)}")
+        params = dict(params)
         param["params"] = params  # ensure modifications are visible to get_params()
 
         if PAGE_RETAIN_ORDER_FIELD in kwargs and PAGE_RETAIN_ORDER_FIELD in param:
@@ -1560,7 +1564,18 @@ class Prepare:
         if search_iter_id is not None:
             search_params[ITER_SEARCH_ID_KEY] = search_iter_id
 
+        search_aggregation = kwargs.get(SEARCH_AGGREGATION)
+        if search_aggregation is not None and not isinstance(search_aggregation, SearchAggregation):
+            raise ParamError(
+                message=(
+                    f"search_aggregation must be a SearchAggregation instance, "
+                    f"got {type(search_aggregation).__name__}"
+                )
+            )
+
         group_by_field = kwargs.get(GROUP_BY_FIELD)
+        if search_aggregation is not None and group_by_field is not None:
+            raise ParamError(message="search_aggregation and group_by_field are mutually exclusive")
         if group_by_field is not None:
             search_params[GROUP_BY_FIELD] = group_by_field
 
@@ -1675,6 +1690,9 @@ class Prepare:
 
         request = milvus_types.SearchRequest(**request_kwargs)
 
+        if search_aggregation is not None:
+            request.search_aggregation.CopyFrom(search_aggregation.to_proto())
+
         if expr is not None:
             request.dsl = expr
 
@@ -1725,6 +1743,8 @@ class Prepare:
     ) -> milvus_types.HybridSearchRequest:
         if rerank is not None and not isinstance(rerank, (Function, BaseRanker)):
             raise ParamError(message="The hybrid search rerank must be a Function or a Ranker.")
+        if kwargs.get(SEARCH_AGGREGATION) is not None:
+            raise ParamError(message="search_aggregation is not supported in hybrid_search")
         rerank_param = {}
         if isinstance(rerank, BaseRanker):
             rerank_param = rerank.dict()
@@ -2658,8 +2678,10 @@ class Prepare:
     def create_snapshot_req(
         cls,
         snapshot_name: str,
-        collection_name: str = "",
+        collection_name: str,
+        db_name: str = "",
         description: str = "",
+        compaction_protection_seconds: int = 0,
     ):
         if not validate_str(snapshot_name):
             msg = "snapshot_name must be a non-empty string"
@@ -2667,49 +2689,90 @@ class Prepare:
         if not validate_str(collection_name):
             msg = "collection_name must be a non-empty string"
             raise ParamError(message=msg)
+        if (
+            not isinstance(compaction_protection_seconds, int)
+            or isinstance(compaction_protection_seconds, bool)
+            or compaction_protection_seconds < 0
+        ):
+            msg = "compaction_protection_seconds must be a non-negative integer"
+            raise ParamError(message=msg)
         return milvus_types.CreateSnapshotRequest(
             name=snapshot_name,
+            db_name=db_name,
             collection_name=collection_name,
             description=description,
+            compaction_protection_seconds=compaction_protection_seconds,
         )
 
     @classmethod
-    def drop_snapshot_req(cls, snapshot_name: str):
+    def drop_snapshot_req(
+        cls,
+        snapshot_name: str,
+        collection_name: str,
+        db_name: str = "",
+    ):
         if not validate_str(snapshot_name):
             msg = "snapshot_name must be a non-empty string"
             raise ParamError(message=msg)
-        return milvus_types.DropSnapshotRequest(name=snapshot_name)
-
-    @classmethod
-    def list_snapshots_req(cls, collection_name: str = ""):
-        return milvus_types.ListSnapshotsRequest(
+        if not validate_str(collection_name):
+            msg = "collection_name must be a non-empty string"
+            raise ParamError(message=msg)
+        return milvus_types.DropSnapshotRequest(
+            name=snapshot_name,
+            db_name=db_name,
             collection_name=collection_name,
         )
 
     @classmethod
-    def describe_snapshot_req(cls, snapshot_name: str):
+    def list_snapshots_req(cls, collection_name: str = "", db_name: str = ""):
+        return milvus_types.ListSnapshotsRequest(
+            db_name=db_name,
+            collection_name=collection_name,
+        )
+
+    @classmethod
+    def describe_snapshot_req(
+        cls,
+        snapshot_name: str,
+        collection_name: str,
+        db_name: str = "",
+    ):
         if not validate_str(snapshot_name):
             msg = "snapshot_name must be a non-empty string"
             raise ParamError(message=msg)
-        return milvus_types.DescribeSnapshotRequest(name=snapshot_name)
+        if not validate_str(collection_name):
+            msg = "collection_name must be a non-empty string"
+            raise ParamError(message=msg)
+        return milvus_types.DescribeSnapshotRequest(
+            name=snapshot_name,
+            db_name=db_name,
+            collection_name=collection_name,
+        )
 
     @classmethod
     def restore_snapshot_req(
         cls,
         snapshot_name: str,
-        collection_name: str = "",
-        rewrite_data: bool = False,
+        source_collection_name: str,
+        target_collection_name: str,
+        source_db_name: str = "",
+        target_db_name: str = "",
     ):
         if not validate_str(snapshot_name):
             msg = "snapshot_name must be a non-empty string"
             raise ParamError(message=msg)
-        if not validate_str(collection_name):
-            msg = "collection_name must be a non-empty string"
+        if not validate_str(target_collection_name):
+            msg = "target_collection_name must be a non-empty string"
+            raise ParamError(message=msg)
+        if not validate_str(source_collection_name):
+            msg = "source_collection_name must be a non-empty string"
             raise ParamError(message=msg)
         return milvus_types.RestoreSnapshotRequest(
             name=snapshot_name,
-            collection_name=collection_name,
-            rewrite_data=rewrite_data,
+            db_name=source_db_name,
+            collection_name=source_collection_name,
+            target_db_name=target_db_name,
+            target_collection_name=target_collection_name,
         )
 
     @classmethod
@@ -2720,8 +2783,42 @@ class Prepare:
         return milvus_types.GetRestoreSnapshotStateRequest(job_id=job_id)
 
     @classmethod
-    def list_restore_snapshot_jobs_req(cls, collection_name: str = ""):
-        return milvus_types.ListRestoreSnapshotJobsRequest(collection_name=collection_name)
+    def list_restore_snapshot_jobs_req(cls, collection_name: str = "", db_name: str = ""):
+        return milvus_types.ListRestoreSnapshotJobsRequest(
+            db_name=db_name,
+            collection_name=collection_name,
+        )
+
+    @classmethod
+    def pin_snapshot_data_req(
+        cls,
+        snapshot_name: str,
+        collection_name: str,
+        db_name: str = "",
+        ttl_seconds: int = 0,
+    ):
+        if not validate_str(snapshot_name):
+            msg = "snapshot_name must be a non-empty string"
+            raise ParamError(message=msg)
+        if not validate_str(collection_name):
+            msg = "collection_name must be a non-empty string"
+            raise ParamError(message=msg)
+        if not isinstance(ttl_seconds, int) or isinstance(ttl_seconds, bool) or ttl_seconds < 0:
+            msg = "ttl_seconds must be a non-negative integer"
+            raise ParamError(message=msg)
+        return milvus_types.PinSnapshotDataRequest(
+            name=snapshot_name,
+            db_name=db_name,
+            collection_name=collection_name,
+            ttl_seconds=ttl_seconds,
+        )
+
+    @classmethod
+    def unpin_snapshot_data_req(cls, pin_id: int):
+        if not isinstance(pin_id, int) or isinstance(pin_id, bool) or pin_id <= 0:
+            msg = "pin_id must be a positive integer"
+            raise ParamError(message=msg)
+        return milvus_types.UnpinSnapshotDataRequest(pin_id=pin_id)
 
     @classmethod
     def add_file_resource(cls, name: str, path: str):

@@ -4,7 +4,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
-from pymilvus import AsyncMilvusClient, DataType
+from pymilvus import AsyncMilvusClient, DataType, SearchAggregation, TopHits
 from pymilvus.client.abstract import AnnSearchRequest
 from pymilvus.client.connection_manager import AsyncConnectionManager
 from pymilvus.client.types import (
@@ -14,6 +14,7 @@ from pymilvus.client.types import (
     RestoreSnapshotJobInfo,
     SnapshotInfo,
 )
+from pymilvus.exceptions import ParamError
 from pymilvus.orm.collection import Function
 from pymilvus.orm.schema import StructFieldSchema
 
@@ -172,6 +173,16 @@ class TestAsyncMilvusClientNewFeatures:
         assert call_args.kwargs.get("ranker") == mock_ranker
 
     @pytest.mark.asyncio
+    async def test_search_passes_search_aggregation(self, client_and_handler):
+        client, mock_handler = client_and_handler
+        mock_handler.search = AsyncMock(return_value=[[{"id": 1, "distance": 0.1}]])
+        agg = SearchAggregation(fields=["brand"], size=3, top_hits=TopHits(size=1))
+
+        await client.search("test_collection", data=[[0.1, 0.2]], search_aggregation=agg)
+
+        assert mock_handler.search.call_args.kwargs["search_aggregation"] is agg
+
+    @pytest.mark.asyncio
     async def test_hybrid_search_with_function_ranker(self, client_and_handler):
         """Test hybrid_search accepts Function type ranker"""
         client, mock_handler = client_and_handler
@@ -199,6 +210,66 @@ class TestAsyncMilvusClientNewFeatures:
         assert result == 123
         call_args = mock_handler.compact.call_args
         assert call_args[1]["is_l0"] is True
+
+    @pytest.mark.asyncio
+    async def test_compact_target_size_mb_default(self, client_and_handler):
+        client, mock_handler = client_and_handler
+        mock_handler.compact = AsyncMock(return_value=99)
+
+        result = await client.compact("col", target_size=512)
+
+        assert result == 99
+        assert mock_handler.compact.call_args[1]["target_size"] == 512
+
+    @pytest.mark.asyncio
+    async def test_compact_target_size_gb(self, client_and_handler):
+        client, mock_handler = client_and_handler
+        mock_handler.compact = AsyncMock(return_value=99)
+
+        await client.compact("col", target_size=2, target_size_unit="gb")
+
+        assert mock_handler.compact.call_args[1]["target_size"] == 2048
+
+    @pytest.mark.asyncio
+    async def test_compact_target_size_none_passes_none(self, client_and_handler):
+        client, mock_handler = client_and_handler
+        mock_handler.compact = AsyncMock(return_value=99)
+
+        await client.compact("col")
+
+        assert mock_handler.compact.call_args[1]["target_size"] is None
+
+    @pytest.mark.asyncio
+    async def test_compact_target_size_zero_rejected(self, client_and_handler):
+        client, mock_handler = client_and_handler
+        mock_handler.compact = AsyncMock(return_value=99)
+
+        with pytest.raises(ParamError):
+            await client.compact("col", target_size=0)
+
+    @pytest.mark.asyncio
+    async def test_compact_target_size_negative_rejected(self, client_and_handler):
+        client, mock_handler = client_and_handler
+        mock_handler.compact = AsyncMock(return_value=99)
+
+        with pytest.raises(ParamError):
+            await client.compact("col", target_size=-1)
+
+    @pytest.mark.asyncio
+    async def test_compact_target_size_invalid_type(self, client_and_handler):
+        client, mock_handler = client_and_handler
+        mock_handler.compact = AsyncMock(return_value=99)
+
+        with pytest.raises(ParamError):
+            await client.compact("col", target_size="512mb")
+
+    @pytest.mark.asyncio
+    async def test_compact_target_size_invalid_unit(self, client_and_handler):
+        client, mock_handler = client_and_handler
+        mock_handler.compact = AsyncMock(return_value=99)
+
+        with pytest.raises(ParamError):
+            await client.compact("col", target_size=512, target_size_unit="zb")
 
     @pytest.mark.asyncio
     async def test_flush_all(self, client_and_handler):
@@ -260,6 +331,18 @@ class TestAsyncMilvusClientNewFeatures:
             timeout=10,
             context=ANY,
         )
+
+    @pytest.mark.asyncio
+    async def test_get_replicate_configuration(self, client_and_handler):
+        """Test get_replicate_configuration method"""
+        client, mock_handler = client_and_handler
+        mock_config = MagicMock()
+        mock_handler.get_replicate_configuration = AsyncMock(return_value=mock_config)
+
+        result = await client.get_replicate_configuration(timeout=10)
+
+        assert result == mock_config
+        mock_handler.get_replicate_configuration.assert_called_once_with(timeout=10, context=ANY)
 
     def test_create_struct_field_schema(self):
         """Test create_struct_field_schema class method"""
@@ -676,14 +759,16 @@ _SNAPSHOT_CASES = [
     (
         "create_snapshot",
         {
-            "collection_name": "test_collection",
             "snapshot_name": "test_snapshot",
+            "collection_name": "test_collection",
             "description": "Test description",
         },
         {
             "snapshot_name": "test_snapshot",
             "collection_name": "test_collection",
             "description": "Test description",
+            "db_name": "",
+            "compaction_protection_seconds": 0,
             "timeout": None,
             "context": ANY,
         },
@@ -692,25 +777,42 @@ _SNAPSHOT_CASES = [
     ),
     (
         "drop_snapshot",
-        {"snapshot_name": "test_snapshot"},
-        {"snapshot_name": "test_snapshot", "timeout": None, "context": ANY},
+        {"snapshot_name": "test_snapshot", "collection_name": "test_collection"},
+        {
+            "snapshot_name": "test_snapshot",
+            "collection_name": "test_collection",
+            "db_name": "",
+            "timeout": None,
+            "context": ANY,
+        },
         None,
         None,
     ),
     (
         "list_snapshots",
         {"collection_name": "test_collection"},
-        {"collection_name": "test_collection", "timeout": None, "context": ANY},
+        {
+            "collection_name": "test_collection",
+            "db_name": "",
+            "timeout": None,
+            "context": ANY,
+        },
         ["snapshot1", "snapshot2"],
         None,
     ),
     (
         "restore_snapshot",
-        {"snapshot_name": "test_snapshot", "collection_name": "restored_collection"},
         {
             "snapshot_name": "test_snapshot",
-            "collection_name": "restored_collection",
-            "rewrite_data": False,
+            "target_collection_name": "restored_collection",
+            "source_collection_name": "test_collection",
+        },
+        {
+            "snapshot_name": "test_snapshot",
+            "target_collection_name": "restored_collection",
+            "source_collection_name": "test_collection",
+            "target_db_name": "",
+            "source_db_name": "",
             "timeout": None,
             "context": ANY,
         },
@@ -727,7 +829,12 @@ _SNAPSHOT_CASES = [
     (
         "list_restore_snapshot_jobs",
         {"collection_name": "test_collection"},
-        {"collection_name": "test_collection", "timeout": None, "context": ANY},
+        {
+            "collection_name": "test_collection",
+            "db_name": "",
+            "timeout": None,
+            "context": ANY,
+        },
         [],
         None,
     ),
@@ -752,11 +859,17 @@ class TestAsyncMilvusClientSnapshot:
         mock_handler.get_server_type.return_value = "milvus"
         mock_handler.describe_snapshot = AsyncMock(return_value=mock_info)
 
-        info = await client.describe_snapshot(snapshot_name="test_snapshot")
+        info = await client.describe_snapshot(
+            snapshot_name="test_snapshot", collection_name="test_collection"
+        )
 
         assert info.name == "test_snapshot"
         mock_handler.describe_snapshot.assert_called_once_with(
-            snapshot_name="test_snapshot", timeout=None, context=ANY
+            snapshot_name="test_snapshot",
+            collection_name="test_collection",
+            db_name="",
+            timeout=None,
+            context=ANY,
         )
 
     @pytest.mark.asyncio
@@ -791,14 +904,16 @@ class TestAsyncMilvusClientSnapshot:
             (
                 "create_snapshot",
                 {
-                    "collection_name": "test_collection",
                     "snapshot_name": "test_snapshot",
+                    "collection_name": "test_collection",
                     "description": "Test description",
                 },
                 {
                     "snapshot_name": "test_snapshot",
                     "collection_name": "test_collection",
                     "description": "Test description",
+                    "db_name": "",
+                    "compaction_protection_seconds": 0,
                     "timeout": None,
                     "context": ANY,
                 },
@@ -806,23 +921,40 @@ class TestAsyncMilvusClientSnapshot:
             ),
             (
                 "drop_snapshot",
-                {"snapshot_name": "test_snapshot"},
-                {"snapshot_name": "test_snapshot", "timeout": None, "context": ANY},
+                {"snapshot_name": "test_snapshot", "collection_name": "test_collection"},
+                {
+                    "snapshot_name": "test_snapshot",
+                    "collection_name": "test_collection",
+                    "db_name": "",
+                    "timeout": None,
+                    "context": ANY,
+                },
                 None,
             ),
             (
                 "list_snapshots",
                 {"collection_name": "test_collection"},
-                {"collection_name": "test_collection", "timeout": None, "context": ANY},
+                {
+                    "collection_name": "test_collection",
+                    "db_name": "",
+                    "timeout": None,
+                    "context": ANY,
+                },
                 ["snapshot1", "snapshot2"],
             ),
             (
                 "restore_snapshot",
-                {"snapshot_name": "test_snapshot", "collection_name": "restored_collection"},
                 {
                     "snapshot_name": "test_snapshot",
-                    "collection_name": "restored_collection",
-                    "rewrite_data": False,
+                    "target_collection_name": "restored_collection",
+                    "source_collection_name": "test_collection",
+                },
+                {
+                    "snapshot_name": "test_snapshot",
+                    "target_collection_name": "restored_collection",
+                    "source_collection_name": "test_collection",
+                    "target_db_name": "",
+                    "source_db_name": "",
                     "timeout": None,
                     "context": ANY,
                 },
@@ -831,7 +963,12 @@ class TestAsyncMilvusClientSnapshot:
             (
                 "list_restore_snapshot_jobs",
                 {"collection_name": "test_collection"},
-                {"collection_name": "test_collection", "timeout": None, "context": ANY},
+                {
+                    "collection_name": "test_collection",
+                    "db_name": "",
+                    "timeout": None,
+                    "context": ANY,
+                },
                 [],
             ),
         ],
@@ -861,6 +998,42 @@ class TestAsyncMilvusClientSnapshot:
         getattr(mock_handler, method_name).assert_called_once_with(**expected_handler_kwargs)
         if return_value is not None:
             assert result == return_value
+
+    @pytest.mark.asyncio
+    async def test_pin_snapshot_data(self, client_and_handler):
+        """Test async pin_snapshot_data passes context."""
+        client, mock_handler = client_and_handler
+        mock_handler.get_server_type.return_value = "milvus"
+        mock_handler.pin_snapshot_data = AsyncMock(return_value=42)
+
+        pin_id = await client.pin_snapshot_data(
+            snapshot_name="test_snapshot",
+            collection_name="test_collection",
+            ttl_seconds=60,
+        )
+
+        assert pin_id == 42
+        mock_handler.pin_snapshot_data.assert_called_once_with(
+            snapshot_name="test_snapshot",
+            collection_name="test_collection",
+            db_name="",
+            ttl_seconds=60,
+            timeout=None,
+            context=ANY,
+        )
+
+    @pytest.mark.asyncio
+    async def test_unpin_snapshot_data(self, client_and_handler):
+        """Test async unpin_snapshot_data passes context."""
+        client, mock_handler = client_and_handler
+        mock_handler.get_server_type.return_value = "milvus"
+        mock_handler.unpin_snapshot_data = AsyncMock(return_value=None)
+
+        await client.unpin_snapshot_data(pin_id=42)
+
+        mock_handler.unpin_snapshot_data.assert_called_once_with(
+            pin_id=42, timeout=None, context=ANY
+        )
 
 
 class TestAsyncFileResourceMethods:

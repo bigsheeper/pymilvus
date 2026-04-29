@@ -2,7 +2,7 @@ import logging
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
-from pymilvus import DataType
+from pymilvus import DataType, SearchAggregation, TopHits
 from pymilvus.client.connection_manager import ConnectionManager
 from pymilvus.client.types import (
     LoadState,
@@ -67,6 +67,61 @@ class TestMilvusClient:
 
         for index in index_params:
             log.info(index)
+
+    def test_add_index_params_none_is_normalized(self):
+        """Regression for #2789: passing params=None should not crash."""
+        index_params = MilvusClient.prepare_index_params()
+        index_params.add_index(
+            field_name="vector",
+            metric_type="IP",
+            index_type="HNSW",
+            params=None,
+        )
+        assert len(index_params) == 1
+        configs = index_params[0].get_index_configs()
+        assert configs["index_type"] == "HNSW"
+        assert configs["metric_type"] == "IP"
+
+    def test_add_index_params_empty_dict(self):
+        """params={} keeps working (no inner params to flatten)."""
+        index_params = MilvusClient.prepare_index_params()
+        index_params.add_index(
+            field_name="vector",
+            metric_type="L2",
+            index_type="FLAT",
+            params={},
+        )
+        assert len(index_params) == 1
+        configs = index_params[0].get_index_configs()
+        assert configs["index_type"] == "FLAT"
+        assert configs["metric_type"] == "L2"
+
+    def test_add_index_params_dict_is_flattened(self):
+        """params={"nlist": 128} is flattened into the index configs."""
+        index_params = MilvusClient.prepare_index_params()
+        index_params.add_index(
+            field_name="vector",
+            metric_type="L2",
+            index_type="IVF_FLAT",
+            params={"nlist": 128},
+        )
+        assert len(index_params) == 1
+        configs = index_params[0].get_index_configs()
+        assert configs["nlist"] == 128
+        assert configs["index_type"] == "IVF_FLAT"
+        assert configs["metric_type"] == "L2"
+
+    @pytest.mark.parametrize("bad_params", ["nlist=128", 123, [("nlist", 128)], 0.5])
+    def test_add_index_params_invalid_type_raises(self, bad_params):
+        """Non-dict, non-None params should raise ParamError with a clear message."""
+        index_params = MilvusClient.prepare_index_params()
+        with pytest.raises(ParamError, match=r"params must be a dict or None"):
+            index_params.add_index(
+                field_name="vector",
+                metric_type="L2",
+                index_type="HNSW",
+                params=bad_params,
+            )
 
     def test_connection_reuse(self):
         """Test that connections with same config share handler, different configs get different handlers."""
@@ -217,8 +272,8 @@ class TestMilvusClientSnapshot:
             client = MilvusClient()
 
             client.create_snapshot(
-                collection_name="test_collection",
                 snapshot_name="test_snapshot",
+                collection_name="test_collection",
                 description="Test description",
             )
 
@@ -226,6 +281,8 @@ class TestMilvusClientSnapshot:
                 snapshot_name="test_snapshot",
                 collection_name="test_collection",
                 description="Test description",
+                db_name="",
+                compaction_protection_seconds=0,
                 timeout=None,
                 context=ANY,
             )
@@ -240,7 +297,7 @@ class TestMilvusClientSnapshot:
         with patch("pymilvus.client.grpc_handler.GrpcHandler", return_value=mock_handler):
             client = MilvusClient()
 
-            client.create_snapshot(collection_name="test_collection", snapshot_name="test_snapshot")
+            client.create_snapshot(snapshot_name="test_snapshot", collection_name="test_collection")
 
             mock_handler.create_snapshot.assert_called_once()
             call_kwargs = mock_handler.create_snapshot.call_args[1]
@@ -258,10 +315,14 @@ class TestMilvusClientSnapshot:
         with patch("pymilvus.client.grpc_handler.GrpcHandler", return_value=mock_handler):
             client = MilvusClient()
 
-            client.drop_snapshot(snapshot_name="test_snapshot")
+            client.drop_snapshot(snapshot_name="test_snapshot", collection_name="test_collection")
 
             mock_handler.drop_snapshot.assert_called_once_with(
-                snapshot_name="test_snapshot", timeout=None, context=ANY
+                snapshot_name="test_snapshot",
+                collection_name="test_collection",
+                db_name="",
+                timeout=None,
+                context=ANY,
             )
 
     def test_list_snapshots(self):
@@ -278,7 +339,7 @@ class TestMilvusClientSnapshot:
 
             assert snapshots == ["snapshot1", "snapshot2"]
             mock_handler.list_snapshots.assert_called_once_with(
-                collection_name="test_collection", timeout=None, context=ANY
+                collection_name="test_collection", db_name="", timeout=None, context=ANY
             )
 
     def test_list_snapshots_all(self):
@@ -315,7 +376,9 @@ class TestMilvusClientSnapshot:
         with patch("pymilvus.client.grpc_handler.GrpcHandler", return_value=mock_handler):
             client = MilvusClient()
 
-            info = client.describe_snapshot(snapshot_name="test_snapshot")
+            info = client.describe_snapshot(
+                snapshot_name="test_snapshot", collection_name="test_collection"
+            )
 
             assert info.name == "test_snapshot"
             assert info.description == "Test description"
@@ -325,7 +388,11 @@ class TestMilvusClientSnapshot:
             assert info.s3_location == "s3://bucket/path"
 
             mock_handler.describe_snapshot.assert_called_once_with(
-                snapshot_name="test_snapshot", timeout=None, context=ANY
+                snapshot_name="test_snapshot",
+                collection_name="test_collection",
+                db_name="",
+                timeout=None,
+                context=ANY,
             )
 
     def test_restore_snapshot(self):
@@ -339,14 +406,18 @@ class TestMilvusClientSnapshot:
             client = MilvusClient()
 
             job_id = client.restore_snapshot(
-                snapshot_name="test_snapshot", collection_name="restored_collection"
+                snapshot_name="test_snapshot",
+                target_collection_name="restored_collection",
+                source_collection_name="test_collection",
             )
 
             assert job_id == 12345
             mock_handler.restore_snapshot.assert_called_once_with(
                 snapshot_name="test_snapshot",
-                collection_name="restored_collection",
-                rewrite_data=False,
+                target_collection_name="restored_collection",
+                source_collection_name="test_collection",
+                target_db_name="",
+                source_db_name="",
                 timeout=None,
                 context=ANY,
             )
@@ -426,7 +497,7 @@ class TestMilvusClientSnapshot:
             assert jobs[1].progress == 50
 
             mock_handler.list_restore_snapshot_jobs.assert_called_once_with(
-                collection_name="test_collection", timeout=None, context=ANY
+                collection_name="test_collection", db_name="", timeout=None, context=ANY
             )
 
     def test_list_restore_snapshot_jobs_all(self):
@@ -445,6 +516,48 @@ class TestMilvusClientSnapshot:
             mock_handler.list_restore_snapshot_jobs.assert_called_once()
             call_kwargs = mock_handler.list_restore_snapshot_jobs.call_args[1]
             assert call_kwargs["collection_name"] == ""
+
+    def test_pin_snapshot_data(self):
+        """Test pin_snapshot_data method."""
+        mock_handler = MagicMock()
+        mock_handler.get_server_type.return_value = "milvus"
+        mock_handler._wait_for_channel_ready = MagicMock()
+        mock_handler.pin_snapshot_data.return_value = 42
+
+        with patch("pymilvus.client.grpc_handler.GrpcHandler", return_value=mock_handler):
+            client = MilvusClient()
+
+            pin_id = client.pin_snapshot_data(
+                snapshot_name="test_snapshot",
+                collection_name="test_collection",
+                ttl_seconds=60,
+            )
+
+            assert pin_id == 42
+            mock_handler.pin_snapshot_data.assert_called_once_with(
+                snapshot_name="test_snapshot",
+                collection_name="test_collection",
+                db_name="",
+                ttl_seconds=60,
+                timeout=None,
+                context=ANY,
+            )
+
+    def test_unpin_snapshot_data(self):
+        """Test unpin_snapshot_data method."""
+        mock_handler = MagicMock()
+        mock_handler.get_server_type.return_value = "milvus"
+        mock_handler._wait_for_channel_ready = MagicMock()
+        mock_handler.unpin_snapshot_data.return_value = None
+
+        with patch("pymilvus.client.grpc_handler.GrpcHandler", return_value=mock_handler):
+            client = MilvusClient()
+
+            client.unpin_snapshot_data(pin_id=42)
+
+            mock_handler.unpin_snapshot_data.assert_called_once_with(
+                pin_id=42, timeout=None, context=ANY
+            )
 
     def test_client_db_isolation(self):
         """
@@ -638,6 +751,15 @@ class TestMilvusClientCreateCollection:
 
 
 class TestMilvusClientCRUD:
+    def test_search_passes_search_aggregation(self, mc):
+        client, handler = mc
+        handler.search.return_value = [[{"id": 1, "distance": 0.1}]]
+        agg = SearchAggregation(fields=["brand"], size=3, top_hits=TopHits(size=1))
+
+        client.search("test_collection", data=[[0.1, 0.2]], search_aggregation=agg)
+
+        assert handler.search.call_args.kwargs["search_aggregation"] is agg
+
     def test_insert_dict_converts_to_list(self):
         result = MagicMock()
         result.insert_count = 1
@@ -1092,6 +1214,7 @@ _SIMPLE_DELEGATION_CASES = [
     ("get_compaction_plans", (42,), {}, "get_compaction_plans"),
     ("run_analyzer", ("hello world",), {}, "run_analyzer"),
     ("update_replicate_configuration", (), {"clusters": []}, "update_replicate_configuration"),
+    ("get_replicate_configuration", (), {}, "get_replicate_configuration"),
     ("alter_database_properties", ("mydb", {"key": "val"}), {}, "alter_database"),
     ("describe_alias", ("alias1",), {}, "describe_alias"),
     ("describe_resource_group", ("rg1",), {}, "describe_resource_group"),
@@ -1251,6 +1374,52 @@ class TestMilvusClientMiscOps:
         client, handler = mc
         handler.compact.return_value = 42
         assert client.compact("col") == 42
+
+    def test_compact_target_size_mb_default(self, mc):
+        client, handler = mc
+        handler.compact.return_value = 42
+        client.compact("col", target_size=512)
+        handler.compact.assert_called_once()
+        assert handler.compact.call_args[1]["target_size"] == 512
+
+    def test_compact_target_size_gb(self, mc):
+        client, handler = mc
+        handler.compact.return_value = 42
+        client.compact("col", target_size=2, target_size_unit="gb")
+        assert handler.compact.call_args[1]["target_size"] == 2048
+
+    def test_compact_target_size_kb(self, mc):
+        client, handler = mc
+        handler.compact.return_value = 42
+        # 2048 KB = 2 MB
+        client.compact("col", target_size=2048, target_size_unit="kb")
+        assert handler.compact.call_args[1]["target_size"] == 2
+
+    def test_compact_target_size_none_passes_none(self, mc):
+        client, handler = mc
+        handler.compact.return_value = 42
+        client.compact("col")
+        assert handler.compact.call_args[1]["target_size"] is None
+
+    def test_compact_target_size_zero_rejected(self, mc):
+        client, _ = mc
+        with pytest.raises(ParamError):
+            client.compact("col", target_size=0)
+
+    def test_compact_target_size_negative_rejected(self, mc):
+        client, _ = mc
+        with pytest.raises(ParamError):
+            client.compact("col", target_size=-1)
+
+    def test_compact_target_size_invalid_type(self, mc):
+        client, _ = mc
+        with pytest.raises(ParamError):
+            client.compact("col", target_size="512mb")
+
+    def test_compact_target_size_invalid_unit(self, mc):
+        client, _ = mc
+        with pytest.raises(ParamError):
+            client.compact("col", target_size=512, target_size_unit="zb")
 
     def test_get_compaction_state(self, mc):
         client, handler = mc

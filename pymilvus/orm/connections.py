@@ -589,7 +589,11 @@ class Connections(metaclass=SingleInstanceMetaClass):
         config = self._alias_config.get(alias, {})
         db_name = config.get("db_name", "")
         req_id = kwargs.get("client_request_id") or kwargs.get("client-request-id", "")
-        return CallContext(db_name=db_name, client_request_id=req_id)
+        return CallContext(
+            db_name=db_name,
+            client_request_id=req_id,
+            idempotency_key=kwargs.get("idempotency_key", ""),
+        )
 
 
 # Singleton Mode in Python

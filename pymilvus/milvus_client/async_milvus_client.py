@@ -487,6 +487,8 @@ class AsyncMilvusClient(BaseMilvusClient):
             partition_name (str, optional): Name of the partition to upsert into.
             **kwargs (dict): Extra keyword arguments.
 
+                * *idempotency_key* (str, optional): Sent as the ``idempotency-key`` gRPC
+                    metadata. Keep one key per logical request.
                 * *partial_update* (bool, optional): Whether this is a partial update operation.
                     If True, only the specified fields will be updated while others remain unchanged
                     Default is False.

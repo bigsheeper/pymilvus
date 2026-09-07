@@ -20,7 +20,11 @@ class BaseMilvusClient:
 
     def _generate_call_context(self, **kwargs) -> CallContext:
         client_request_id = kwargs.get("client_request_id") or kwargs.get("client-request-id", "")
-        return CallContext(db_name=self._config.db_name, client_request_id=client_request_id)
+        return CallContext(
+            db_name=self._config.db_name,
+            client_request_id=client_request_id,
+            idempotency_key=kwargs.get("idempotency_key", ""),
+        )
 
     def _with_cluster_id(self, kwargs: Dict) -> Dict:
         cluster_id = getattr(self, "_cluster_id", "")

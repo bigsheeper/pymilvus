@@ -32,6 +32,14 @@ class TestHttpHeaders:
         assert headers["DB-Name"] == "my_db"
         assert headers["Authorization"] == "Bearer my-key"
 
+    def test_with_idempotency_key(self):
+        headers = _http_headers(api_key="my-key", idempotency_key="run-1-batch-1")
+        assert headers["Idempotency-Key"] == "run-1-batch-1"
+
+    def test_with_empty_idempotency_key(self):
+        headers = _http_headers(api_key="my-key", idempotency_key="")
+        assert "Idempotency-Key" not in headers
+
 
 class TestPostRequest:
     @patch.object(bulk_import_mod.requests, "post")
@@ -67,6 +75,23 @@ class TestPostRequest:
 
         _, kwargs = mock_post.call_args
         assert "DB-Name" not in kwargs["headers"]
+
+    @patch.object(bulk_import_mod.requests, "post")
+    def test_pops_idempotency_key_and_adds_header(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_post.return_value = mock_resp
+
+        _post_request(
+            url="http://example.com/api",
+            api_key="my-key",
+            params={"foo": "bar"},
+            idempotency_key="run-1-batch-1",
+        )
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["headers"]["Idempotency-Key"] == "run-1-batch-1"
+        assert "idempotency_key" not in kwargs
 
 
 class TestGetImportProgress:
@@ -171,6 +196,43 @@ class TestBulkImport:
         _, kwargs = mock_post.call_args
         assert "DB-Name" not in kwargs["headers"]
         assert kwargs["json"]["dbName"] == ""
+
+    @patch.object(bulk_import_mod.requests, "post")
+    def test_sends_idempotency_key_header(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"code": 0, "data": {}}
+        mock_post.return_value = mock_resp
+
+        bulk_import(
+            url="http://example.com",
+            collection_name="my_collection",
+            api_key="my-key",
+            files=[["file1.parquet"]],
+            idempotency_key="run-1-batch-1",
+        )
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["headers"]["Idempotency-Key"] == "run-1-batch-1"
+        assert "idempotencyKey" not in kwargs["json"]
+        assert "idempotency_key" not in kwargs
+
+    @patch.object(bulk_import_mod.requests, "post")
+    def test_without_idempotency_key_has_no_header(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"code": 0, "data": {}}
+        mock_post.return_value = mock_resp
+
+        bulk_import(
+            url="http://example.com",
+            collection_name="my_collection",
+            api_key="my-key",
+            files=[["file1.parquet"]],
+        )
+
+        _, kwargs = mock_post.call_args
+        assert "Idempotency-Key" not in kwargs["headers"]
 
 
 class TestListImportJobs:

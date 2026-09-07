@@ -21,7 +21,7 @@ from pymilvus.exceptions import MilvusException
 logger = logging.getLogger(__name__)
 
 
-def _http_headers(api_key: str, db_name: str = ""):
+def _http_headers(api_key: str, db_name: str = "", idempotency_key: str = ""):
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_0) AppleWebKit/535.11 (KHTML, like Gecko) "
         "Chrome/17.0.963.56 Safari/535.11",
@@ -32,6 +32,8 @@ def _http_headers(api_key: str, db_name: str = ""):
     }
     if db_name:
         headers["DB-Name"] = db_name
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
     return headers
 
 
@@ -72,10 +74,11 @@ def _post_request(
         requests.Response: Response object.
     """
     db_name = kwargs.pop("db_name", "")
+    idempotency_key = kwargs.pop("idempotency_key", "")
     try:
         resp = requests.post(
             url=url,
-            headers=_http_headers(api_key, db_name),
+            headers=_http_headers(api_key, db_name, idempotency_key),
             json=params,
             timeout=timeout,
             verify=verify,
@@ -124,6 +127,7 @@ def bulk_import(
     data_paths: [List[List[str]]] = None,
     verify: Optional[Union[bool, str]] = True,
     cert: Optional[Union[str, tuple]] = None,
+    idempotency_key: str = "",
     **kwargs,
 ) -> requests.Response:
     """call bulkinsert restful interface to import files
@@ -153,6 +157,9 @@ def bulk_import(
              or a string, which must be server's certificate path. Defaults to `True`.
         cert (str, tuple, optional): if String, path to ssl client cert file.
                                      if Tuple, ('cert', 'key') pair.
+        idempotency_key (str, optional): Sent as the ``Idempotency-Key`` header. A retry
+             carrying the same key resolves to the original import job instead of
+             creating a second one. Keep one key per logical request.
 
     Returns:
         response of the restful interface
@@ -253,6 +260,7 @@ def bulk_import(
         verify=verify,
         cert=cert,
         db_name=db_name,
+        idempotency_key=idempotency_key,
         **kwargs,
     )
     _handle_response(request_url, resp.json())

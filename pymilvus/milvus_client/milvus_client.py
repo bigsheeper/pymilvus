@@ -244,6 +244,11 @@ class MilvusClient(BaseMilvusClient):
                 cast to list.
             timeout (float, optional): The timeout to use, will override init timeout. Defaults
                 to None.
+            **kwargs (dict): Extra keyword arguments.
+
+                * *idempotency_key* (str, optional): Sent as the ``idempotency-key`` gRPC
+                    metadata. A retry carrying the same key is applied at most once and
+                    returns the original result. Keep one key per logical request.
 
         Raises:
             DataNotMatchException: If the data has missing fields an exception will be thrown.
@@ -302,6 +307,8 @@ class MilvusClient(BaseMilvusClient):
             partition_name (str, optional): Name of the partition to upsert into.
             **kwargs (dict): Extra keyword arguments.
 
+                * *idempotency_key* (str, optional): Sent as the ``idempotency-key`` gRPC
+                    metadata. Keep one key per logical request.
                 * *partial_update* (bool, optional): Whether this is a partial update operation.
                     If True, only the specified fields will be updated while others remain unchanged
                     Default is False.
@@ -836,6 +843,10 @@ class MilvusClient(BaseMilvusClient):
             filter(str, optional): A filter to use for the deletion. Defaults to none.
             timeout (int, optional): Timeout to use, overides the client level assigned at init.
                 Defaults to None.
+            **kwargs (dict): Extra keyword arguments.
+
+                * *idempotency_key* (str, optional): Sent as the ``idempotency-key`` gRPC
+                    metadata. Keep one key per logical request.
 
             Note: You need to passin either ids or filter, and they cannot be used at the same time.
 

@@ -183,7 +183,8 @@ class Collection:
         context creation in some code paths (e.g., num_entities property).
 
         Args:
-            **kwargs: Optional kwargs for context generation (e.g., client_request_id).
+            **kwargs: Optional kwargs for context generation (e.g., client_request_id,
+                idempotency_key).
 
         Returns:
             tuple: (handler, context) tuple where handler is GrpcHandler/AsyncGrpcHandler
